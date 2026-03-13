@@ -19,10 +19,14 @@ comments block merge.
 
 - Address ALL review comments before requesting re-review. Do not leave
   comments unanswered.
+- Every comment requires two actions: a **closing reply** and **thread
+  resolution**. Replying alone does not resolve the thread; the thread must
+  be explicitly resolved via the GitHub UI or API.
 - Reply to each comment with a brief explanation of what was done, referencing
   the commit hash (e.g., "Fixed in abc1234.").
 - If a comment is a false positive or you disagree, reply with a clear
-  technical explanation. Do not dismiss without justification.
+  technical explanation, then resolve the thread. Do not dismiss without
+  justification.
 - After pushing fixes, update the PR description to reflect the expanded scope
   (per the submit-pr skill).
 
@@ -67,11 +71,12 @@ expose command-line arguments.
 ## Workflow
 
 1. After pushing a PR, wait for both CI and Copilot review.
-2. Read all Copilot comments and CI logs.
+2. Read all review comments and CI logs.
 3. Fix all issues in a single commit (or minimal commits).
-4. Reply to each comment with the fix commit hash.
-5. **Resolve each review thread** after replying. Replying alone does not
-   resolve the thread. Use the GitHub GraphQL API:
+4. Reply to each comment with the fix commit hash (e.g., "Fixed in abc1234.").
+5. **Resolve each review thread** after replying. Every thread must have both
+   a closing reply and an explicit resolution — replying alone is not enough.
+   Use the GitHub GraphQL API:
 
    ```bash
    # List unresolved threads
