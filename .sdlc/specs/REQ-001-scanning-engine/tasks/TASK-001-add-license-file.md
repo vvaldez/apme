@@ -6,7 +6,7 @@ REQ-001: Core Scanning Engine
 
 ## Status
 
-Pending
+Complete
 
 ## Description
 
@@ -34,18 +34,18 @@ Add Apache 2.0 license to the repository per DR-009 decision. This includes the 
 
 Before marking complete:
 
-- [ ] LICENSE file exists at repository root
-- [ ] LICENSE contains full Apache 2.0 text
-- [ ] README.md has license badge (e.g., `![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)`)
-- [ ] CONTRIBUTING.md mentions Apache 2.0 license terms
+- [x] LICENSE file exists at repository root
+- [x] LICENSE contains full Apache 2.0 text
+- [x] README.md has license badge (e.g., `![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)`)
+- [x] CONTRIBUTING.md mentions Apache 2.0 license terms
 
 ## Acceptance Criteria Reference
 
 From DR-009 (Licensing Model):
 - [x] Decision: Apache 2.0 (Fully Open Source)
-- [ ] LICENSE file added
-- [ ] License badge in README
-- [ ] CONTRIBUTING.md updated
+- [x] LICENSE file added
+- [x] License badge in README
+- [x] CONTRIBUTING.md updated
 
 ## Related Artifacts
 
@@ -55,7 +55,7 @@ From DR-009 (Licensing Model):
 
 ## Completion Checklist
 
-- [ ] Implementation complete
-- [ ] Verification steps pass
-- [ ] Status updated to Complete
+- [x] Implementation complete
+- [x] Verification steps pass
+- [x] Status updated to Complete
 - [ ] Committed with message: `Implements TASK-001: Add Apache 2.0 LICENSE file`

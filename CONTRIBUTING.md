@@ -4,6 +4,7 @@ Thank you for your interest in contributing to APME! This document provides guid
 
 ## Table of Contents
 
+- [License](#license)
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
@@ -11,6 +12,14 @@ Thank you for your interest in contributing to APME! This document provides guid
 - [Security Guidelines](#security-guidelines)
 - [Pull Request Process](#pull-request-process)
 - [Coding Standards](#coding-standards)
+
+---
+
+## License
+
+This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for the full text.
+
+By contributing to APME, you agree that your contributions will be licensed under the Apache License 2.0. No Contributor License Agreement (CLA) is required.
 
 ---
 
