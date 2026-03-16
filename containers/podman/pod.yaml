@@ -82,5 +82,5 @@ spec:
   volumes:
     - name: cache
       hostPath:
-        path: apme-cache
+        path: /tmp/apme-cache
         type: DirectoryOrCreate
