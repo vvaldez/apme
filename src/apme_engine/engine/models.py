@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import jsonpickle
 from rapidfuzz.distance import Levenshtein
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
-from tabulate import tabulate
+
+from apme_engine.ansi import table as ansi_table
 
 # Recursive type for YAML/JSON values (defined before local imports to avoid circular import)
 YAMLScalar = str | int | float | bool | None
@@ -1092,19 +1093,18 @@ class VariableDict:
 
     @staticmethod
     def print_table(data: dict[str, list[Variable]]) -> str:
-        """Format variable data as a tabulate table string.
+        """Format variable data as a table string.
 
         Args:
             data: Map from variable name to list of Variable by precedence.
 
         Returns:
-            Tabulated string.
+            Formatted table string.
 
         """
         d = VariableDict(_dict=data)
-        table = []
-        type_labels = []
-        found_type_label_names = []
+        type_labels: list[VariablePrecedence] = []
+        found_type_label_names: list[str] = []
         for v_list in d._dict.values():
             for v in v_list:
                 if not v.type or v.type.name in found_type_label_names:
@@ -1113,9 +1113,11 @@ class VariableDict:
                 found_type_label_names.append(v.type.name)
         type_labels = sorted(type_labels, key=lambda x: x.order, reverse=True)
 
+        headers = ["NAME", *(t.name.upper() for t in type_labels)]
+        rows: list[list[str]] = []
         for v_name in d._dict:
             v_list = d._dict[v_name]
-            row: dict[str, YAMLValue] = {"NAME": v_name}
+            row: list[str] = [v_name]
             for t in type_labels:
                 cell_value: YAMLValue = "-"
                 for v in v_list:
@@ -1124,10 +1126,9 @@ class VariableDict:
                     cell_value = v.value
                     if isinstance(cell_value, str) and cell_value == "":
                         cell_value = '""'
-                type_label = t.name.upper()
-                row[type_label] = cell_value
-            table.append(row)
-        return str(tabulate(table, headers="keys"))
+                row.append(str(cell_value))
+            rows.append(row)
+        return ansi_table(headers, rows)
 
 
 class ArgumentsType:
