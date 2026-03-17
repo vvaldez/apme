@@ -20,7 +20,7 @@ Only run the health-check once the pod is **Running**. Use `wait-for-pod.sh` to 
 
 The pod creates:
 
-- **apme-cache** — directory in repo root used as the collection cache (cache-maintainer writes here; ansible reads it).
+- **Cache directory** — defaults to `${XDG_CACHE_HOME:-$HOME/.cache}/apme` (persists across reboots). Override with `APME_CACHE_HOST_PATH=/my/cache ./up.sh`. The cache-maintainer writes here; the ansible validator reads it.
 - OPA bundle is mounted from **src/apme_engine/validators/opa/bundle**.
 
 ## Run a scan (CLI on-the-fly)
