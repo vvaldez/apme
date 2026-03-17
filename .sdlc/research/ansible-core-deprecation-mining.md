@@ -340,6 +340,6 @@ Per ADR-009, validators are read-only — remediation is a separate engine. Each
 ## References
 
 - [ANSIBLE_CORE_MIGRATION.md](/docs/ANSIBLE_CORE_MIGRATION.md) — existing 2.19/2.20 migration rules
-- [ansible-core changelog](https://github.com/ansible/ansible/blob/devel/changelogs/CHANGELOG-v2.20.rst)
+- [ansible-core changelogs](https://github.com/ansible/ansible/tree/devel/changelogs) — porting guides and version-specific changes
 - ansible-core source: `lib/ansible/` on `devel` branch
 - ADR-008: Rule ID conventions (M = modernization)
