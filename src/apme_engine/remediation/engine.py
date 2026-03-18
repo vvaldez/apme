@@ -172,6 +172,20 @@ class RemediationEngine:
                 self._log(f"  Pass {pass_num}: 0 fixable -> converged")
                 break
 
+            def _viol_line(v: ViolationDict) -> int:
+                raw = v.get("line", 0)
+                if isinstance(raw, int):
+                    return raw
+                if isinstance(raw, str):
+                    cleaned = raw.lstrip("L").split("-")[0]
+                    try:
+                        return int(cleaned)
+                    except ValueError:
+                        return 0
+                return 0
+
+            tier1.sort(key=_viol_line, reverse=True)
+
             applied_this_pass = 0
             for v in tier1:
                 rule_id = normalize_rule_id(str(v.get("rule_id", "")))
@@ -195,17 +209,18 @@ class RemediationEngine:
 
             self._write_files(file_contents)
             new_violations = self._scan_fn(file_paths)
-            new_count = len(new_violations)
+            new_tier1, _, _ = partition_violations(new_violations, self._registry)
+            new_fixable = len(new_tier1)
 
-            if new_count >= prev_count:
-                self._log(f"  Pass {pass_num}: oscillation ({new_count} >= {prev_count})")
+            if new_fixable >= prev_count:
+                self._log(f"  Pass {pass_num}: oscillation ({new_fixable} fixable >= {prev_count})")
                 oscillation = True
                 break
 
-            prev_count = new_count
+            prev_count = new_fixable
 
-            if new_count == 0:
-                self._log(f"  Pass {pass_num}: fully converged (0 violations)")
+            if new_fixable == 0:
+                self._log(f"  Pass {pass_num}: fully converged (0 fixable)")
                 break
 
         # Final partition of remaining violations

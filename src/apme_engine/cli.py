@@ -729,6 +729,13 @@ def _run_fix(args: argparse.Namespace) -> None:
     sys.stderr.write("Phase 4: Remediating...\n")
     report = engine.remediate(yaml_files, apply=apply_changes)
 
+    if apply_changes and report.fixed > 0:
+        reformat = [format_file(Path(p)) for p in yaml_files]
+        reformatted = [r for r in reformat if r.changed]
+        if reformatted:
+            for r in reformatted:
+                r.path.write_text(r.formatted, encoding="utf-8")
+
     # Phase 5: Report
     sys.stderr.write("Phase 5: Summary\n")
     sys.stderr.write(f"  Tier 1 (deterministic):  {report.fixed} fixed\n")

@@ -23,8 +23,10 @@ def violation_line_to_int(violation: ViolationDict) -> int:
     if isinstance(line, (int, float)):
         return int(line)
     if isinstance(line, str):
+        raw = line.lstrip("L")
+        raw = raw.split("-")[0]
         try:
-            return int(line)
+            return int(raw)
         except ValueError:
             return 0
     return 0

@@ -104,6 +104,63 @@ def _fix_tabs(text: str) -> str:
     return text.replace("\t", "  ")
 
 
+def _strip_stray_blanks(text: str) -> str:
+    """Remove blank lines that appear inside YAML mappings.
+
+    Keeps blank lines that appear before top-level document separators or
+    at the very end of the file.
+
+    Args:
+        text: YAML text possibly containing stray blank lines.
+
+    Returns:
+        Cleaned text with interior blank lines removed.
+    """
+    lines = text.split("\n")
+    result: list[str] = []
+    for i, line in enumerate(lines):
+        if line.strip() == "" and i > 0 and i < len(lines) - 1:
+            next_line = lines[i + 1] if i + 1 < len(lines) else ""
+            if next_line.startswith("---") or next_line.strip() == "":
+                result.append(line)
+                continue
+            continue
+        result.append(line)
+    return "\n".join(result)
+
+
+_TASK_ITEM_RE = re.compile(r"^(\s+)- \S")
+
+
+def _add_task_spacing(text: str) -> str:
+    """Insert a blank line between task list items when missing.
+
+    A task list item is a ``- `` at indentation N where the item spans
+    multiple lines (next line at N+2) or is a single-line action call.
+    Bare scalar list items (loop values) are skipped.
+
+    Args:
+        text: Formatted YAML text.
+
+    Returns:
+        Text with blank lines between task-level list items.
+    """
+    lines = text.split("\n")
+    result: list[str] = [lines[0]] if lines else []
+    for i in range(1, len(lines)):
+        line = lines[i]
+        m = _TASK_ITEM_RE.match(line)
+        if m and result and result[-1].strip() != "":
+            indent = m.group(1)
+            is_mapping = i + 1 < len(lines) and lines[i + 1].startswith(indent + "  ")
+            is_action = ":" in line
+            prev_is_list_header = result[-1].rstrip().endswith(":")
+            if (is_mapping or is_action) and not prev_is_list_header:
+                result.append("")
+        result.append(line)
+    return "\n".join(result)
+
+
 def _reorder_task_keys(data: object) -> None:
     """Reorder keys in task mappings so name comes first, then action, then meta keys.
 
@@ -223,6 +280,8 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     formatted = yaml.dumps(data)
 
     formatted = _fix_jinja_spacing(formatted)
+    formatted = _strip_stray_blanks(formatted)
+    formatted = _add_task_spacing(formatted)
 
     changed = formatted != original
     diff = ""
