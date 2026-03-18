@@ -9,11 +9,19 @@ set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Ensure image exists
 podman image exists apme-cli:latest 2>/dev/null || { echo "Run containers/podman/build.sh first."; exit 1; }
-# Primary is reachable at localhost:50051 when in the same pod
-podman run --rm \
+# Primary is reachable at localhost:50051 when in the same pod.
+# Avoid --rm: podman has a race condition removing pod-joined containers
+# ("cannot remove container ... as it is running"). Instead, create with a
+# name, capture the exit code, then force-remove.
+CLI_NAME="apme-cli-$$"
+rc=0
+podman run \
+  --name "$CLI_NAME" \
   --pod apme-pod \
-  -v "$(pwd)":/workspace:ro,Z \
+  -v "$(pwd)":/workspace:Z \
   -w /workspace \
   -e APME_PRIMARY_ADDRESS=127.0.0.1:50051 \
   apme-cli:latest \
-  "${@:-.}"
+  "${@:-.}" || rc=$?
+podman rm -f "$CLI_NAME" >/dev/null 2>&1 || true
+exit "$rc"

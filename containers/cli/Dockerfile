@@ -1,4 +1,4 @@
-# CLI: presentation layer; calls Primary over gRPC.
+# CLI: presentation layer; calls Primary over gRPC for scan, runs fix/format locally.
 # Mount project at /workspace; set APME_PRIMARY_ADDRESS to primary service.
 FROM python:3.12-slim
 
@@ -9,5 +9,5 @@ RUN pip install --no-cache-dir .
 ENV APME_PRIMARY_ADDRESS=primary:50051
 WORKDIR /workspace
 
-ENTRYPOINT ["apme-scan", "scan"]
-CMD ["."]
+ENTRYPOINT ["apme-scan"]
+CMD ["scan", "."]

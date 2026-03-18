@@ -707,6 +707,50 @@ def _run_format(args: argparse.Namespace) -> None:
         sys.stderr.write(f"\n{len(changed)} file(s) would be reformatted (use --apply to write)\n")
 
 
+def _scan_files_grpc(
+    file_paths: list[str],
+    primary_addr: str,
+    ansible_version: str | None = None,
+) -> list[ViolationDict]:
+    """Scan files via Primary gRPC daemon (fans out to all validators including OPA).
+
+    Args:
+        file_paths: Paths to YAML files to scan.
+        primary_addr: gRPC address of the Primary daemon (e.g. 127.0.0.1:50051).
+        ansible_version: ansible-core version for plugin introspection; None uses default.
+
+    Returns:
+        Deduplicated, sorted list of violation dicts.
+
+    """
+    yaml_files = [f for f in file_paths if f.endswith((".yml", ".yaml"))]
+    if not yaml_files:
+        return []
+
+    target = Path(yaml_files[0]).resolve().parent
+    if len(yaml_files) > 1:
+        target = Path(os.path.commonpath([str(Path(f).resolve().parent) for f in yaml_files]))
+
+    chunks = yield_scan_chunks(
+        str(target),
+        project_root_name="project",
+        ansible_core_version=ansible_version,
+    )
+
+    channel = grpc.insecure_channel(primary_addr)
+    stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+    try:
+        resp = stub.ScanStream(chunks, timeout=120)
+    except grpc.RpcError as e:
+        sys.stderr.write(f"gRPC scan error: {e.details()}\n")
+        return []
+    finally:
+        channel.close()
+
+    violations: list[ViolationDict] = [violation_proto_to_dict(v) for v in resp.violations]
+    return _deduplicate_violations(_sort_violations(violations))
+
+
 def _scan_files_local(
     file_paths: list[str],
     repo_root: str,
@@ -800,24 +844,33 @@ def _apply_remediation(
         sys.stderr.write("  No YAML files found.\n")
         return
 
-    repo_root = str(Path(__file__).resolve().parent.parent)
+    primary_addr = os.environ.get("APME_PRIMARY_ADDRESS")
 
-    session = resolve_session(
-        ansible_version or ANSIBLE_DEFAULT_VERSION,
-        collection_specs=collection_specs,
-        session_id=session_id,
-    )
-    active_session_id = session.session_id if session else None
+    if primary_addr:
 
-    def scan_fn(paths: list[str]) -> list[ViolationDict]:
-        return _scan_files_local(
-            paths,
-            repo_root,
-            opa_bundle,
-            ansible_version=ansible_version,
+        def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            return _scan_files_grpc(paths, primary_addr, ansible_version=ansible_version)
+
+        active_session_id = None
+    else:
+        repo_root = str(Path(__file__).resolve().parent.parent)
+
+        session = resolve_session(
+            ansible_version or ANSIBLE_DEFAULT_VERSION,
             collection_specs=collection_specs,
-            session_id=active_session_id,
+            session_id=session_id,
         )
+        active_session_id = session.session_id if session else None
+
+        def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            return _scan_files_local(
+                paths,
+                repo_root,
+                opa_bundle,
+                ansible_version=ansible_version,
+                collection_specs=collection_specs,
+                session_id=active_session_id,
+            )
 
     registry = build_default_registry()
     engine = RemediationEngine(
