@@ -6,7 +6,7 @@ description: File deletion (annotation-based).
 
 ## File deletion (R115)
 
-File deletion with mutable path (annotation-based). Disabled by default.
+File deletion with mutable path (annotation-based).
 
 ### Example: pass
 

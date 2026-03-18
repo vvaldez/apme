@@ -189,22 +189,26 @@ def yield_scan_chunks(
     for f in files:
         msg_size = len(f.path.encode()) + len(f.content)
         if batch and batch_bytes + msg_size > chunk_max_bytes:
-            yield ScanChunk(
-                scan_id=req.scan_id or "" if first_chunk else "",
-                project_root=req.project_root if first_chunk else "",
-                options=opts if first_chunk else None,
-                files=batch,
-                last=False,
-            )
+            chunk_kwargs: dict[str, object] = {
+                "files": batch,
+                "last": False,
+            }
+            if first_chunk:
+                chunk_kwargs["scan_id"] = req.scan_id or ""
+                chunk_kwargs["project_root"] = req.project_root
+                chunk_kwargs["options"] = opts
+            yield ScanChunk(**chunk_kwargs)
             first_chunk = False
             batch = []
             batch_bytes = 0
         batch.append(f)
         batch_bytes += msg_size
-    yield ScanChunk(
-        scan_id=req.scan_id or "" if first_chunk else "",
-        project_root=req.project_root if first_chunk else "",
-        options=opts if first_chunk else None,
-        files=batch,
-        last=True,
-    )
+    final_kwargs: dict[str, object] = {
+        "files": batch,
+        "last": True,
+    }
+    if first_chunk:
+        final_kwargs["scan_id"] = req.scan_id or ""
+        final_kwargs["project_root"] = req.project_root
+        final_kwargs["options"] = opts
+    yield ScanChunk(**final_kwargs)

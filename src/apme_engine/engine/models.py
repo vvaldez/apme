@@ -1415,6 +1415,7 @@ class PackageInstallDetail(AnnotationDetail):
         version: Version string, Arguments, or list of Variables.
         is_mutable_pkg: True if pkg contains variable refs.
         disable_validate_certs: True if validate_certs is disabled.
+        disable_gpg_check: True if GPG signature checking is disabled.
         allow_downgrade: True if allow_downgrade is set.
 
     """
@@ -1423,6 +1424,7 @@ class PackageInstallDetail(AnnotationDetail):
     version: str | Arguments | list[Variable] = ""
     is_mutable_pkg: bool = False
     disable_validate_certs: bool = False
+    disable_gpg_check: bool = False
     allow_downgrade: bool = False
 
     _pkg_arg: Arguments | None = None
@@ -1444,7 +1446,7 @@ class PackageInstallDetail(AnnotationDetail):
         if self._validate_certs_arg and not _convert_to_bool(self._validate_certs_arg.raw):
             self.disable_validate_certs = True
         if self._disable_gpg_check_arg and _convert_to_bool(self._disable_gpg_check_arg.raw):
-            self.disable_validate_certs = True
+            self.disable_gpg_check = True
 
 
 @dataclass
