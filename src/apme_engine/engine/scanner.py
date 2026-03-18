@@ -939,11 +939,7 @@ class SingleScan:
                 d["options"] = {}
         if node_type == "taskcall":
             original_module = (getattr(spec, "module", "") if spec else "") or ""
-            d["module"] = (
-                getattr(node, "resolved_name", "")
-                or getattr(node, "resolved_action", "")
-                or original_module
-            )
+            d["module"] = getattr(node, "resolved_name", "") or getattr(node, "resolved_action", "") or original_module
             d["original_module"] = original_module
             anns = []
             for an in getattr(node, "annotations", []) or []:

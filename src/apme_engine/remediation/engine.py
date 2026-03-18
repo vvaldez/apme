@@ -11,6 +11,7 @@ from pathlib import Path
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.partition import normalize_rule_id, partition_violations
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
 @dataclass
@@ -172,19 +173,7 @@ class RemediationEngine:
                 self._log(f"  Pass {pass_num}: 0 fixable -> converged")
                 break
 
-            def _viol_line(v: ViolationDict) -> int:
-                raw = v.get("line", 0)
-                if isinstance(raw, int):
-                    return raw
-                if isinstance(raw, str):
-                    cleaned = raw.lstrip("L").split("-")[0]
-                    try:
-                        return int(cleaned)
-                    except ValueError:
-                        return 0
-                return 0
-
-            tier1.sort(key=_viol_line, reverse=True)
+            tier1.sort(key=violation_line_to_int, reverse=True)
 
             applied_this_pass = 0
             for v in tier1:

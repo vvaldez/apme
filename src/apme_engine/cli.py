@@ -753,11 +753,11 @@ def _run_fix(args: argparse.Namespace) -> None:
     sys.stderr.write("Phase 4: Remediating...\n")
     report = engine.remediate(yaml_files, apply=apply_changes)
 
-    if apply_changes and report.fixed > 0:
-        reformat = [format_file(Path(p)) for p in yaml_files]
-        reformatted = [r for r in reformat if r.changed]
-        if reformatted:
-            for r in reformatted:
+    if apply_changes and report.applied_patches:
+        patched_paths = {p.path for p in report.applied_patches}
+        reformat = [format_file(Path(p)) for p in patched_paths]
+        for r in reformat:
+            if r.changed:
                 r.path.write_text(r.formatted, encoding="utf-8")
 
     # Phase 5: Report

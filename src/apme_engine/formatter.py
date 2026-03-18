@@ -105,10 +105,10 @@ def _fix_tabs(text: str) -> str:
 
 
 def _strip_stray_blanks(text: str) -> str:
-    """Remove blank lines that appear inside YAML mappings.
+    """Remove interior blank lines inserted by ruamel round-trip dumping.
 
-    Keeps blank lines that appear before top-level document separators or
-    at the very end of the file.
+    Keeps blank lines before document markers (``---``) and at EOF.
+    Intentional task-level spacing is re-inserted by ``_add_task_spacing``.
 
     Args:
         text: YAML text possibly containing stray blank lines.
@@ -129,15 +129,15 @@ def _strip_stray_blanks(text: str) -> str:
     return "\n".join(result)
 
 
-_TASK_ITEM_RE = re.compile(r"^(\s+)- \S")
+_TASK_LIST_KEYS = frozenset({"tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always"})
+_TASK_ITEM_RE = re.compile(r"^(\s*)- \S")
 
 
 def _add_task_spacing(text: str) -> str:
     """Insert a blank line between task list items when missing.
 
-    A task list item is a ``- `` at indentation N where the item spans
-    multiple lines (next line at N+2) or is a single-line action call.
-    Bare scalar list items (loop values) are skipped.
+    Only applies under known task-list keys (tasks, handlers, block, etc.)
+    so that non-task sequences (vars lists, loop items) are not affected.
 
     Args:
         text: Formatted YAML text.
@@ -147,10 +147,25 @@ def _add_task_spacing(text: str) -> str:
     """
     lines = text.split("\n")
     result: list[str] = [lines[0]] if lines else []
+    in_task_list = False
+    task_list_indent = -1
     for i in range(1, len(lines)):
         line = lines[i]
+        stripped = line.rstrip()
+
+        if stripped.endswith(":") and stripped.lstrip("- ").rstrip(":").strip() in _TASK_LIST_KEYS:
+            in_task_list = True
+            task_list_indent = len(line) - len(line.lstrip())
+            result.append(line)
+            continue
+
+        if in_task_list and stripped and not stripped.startswith("#"):
+            line_indent = len(line) - len(line.lstrip())
+            if line_indent <= task_list_indent and not _TASK_ITEM_RE.match(line):
+                in_task_list = False
+
         m = _TASK_ITEM_RE.match(line)
-        if m and result and result[-1].strip() != "":
+        if in_task_list and m and result and result[-1].strip() != "":
             indent = m.group(1)
             is_mapping = i + 1 < len(lines) and lines[i + 1].startswith(indent + "  ")
             is_action = ":" in line
