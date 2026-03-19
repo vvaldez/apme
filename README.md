@@ -137,18 +137,18 @@ apme-scan fix --ai --model openrouter/anthropic/claude-sonnet-4 --apply /path/to
 
 ### Container daemon
 
+See the [Abbenay container documentation](https://github.com/redhat-developer/abbenay/blob/main/docs/CONTAINER.md) for full container setup instructions.
+
 ```bash
-# Build the Abbenay container
-podman build -f containers/Containerfile.abbenay -t apme-abbenay .
-
-# Run with API key via env var
+# Build and run the Abbenay container (from abbenay repo)
+podman build -f Containerfile -t abbenay:latest .
 podman run -d --name abbenay \
-  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-  -v abbenay-config:/home/abbenay/.config/abbenay:Z \
-  -p 50057:50057 apme-abbenay
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -p 8787:8787 -p 50051:50051 \
+  abbenay:latest
 
-# Point APME at the container
-apme-scan fix --ai --abbenay-addr localhost:50057 --apply .
+# Point APME at the container via gRPC TCP
+apme-scan fix --ai --abbenay-addr localhost:50051 --apply .
 ```
 
 ### CLI flags

@@ -873,7 +873,7 @@ def _apply_remediation(
         collection_specs: Optional collection specifiers for venv.
         session_id: Optional session ID for venv reuse.
         ai_provider: Optional AIProvider for Tier 2 escalation.
-        max_ai_attempts: Max LLM calls per violation.
+        max_ai_attempts: Max retry attempts for AI proposals per file batch.
         ci_mode: If True, apply AI proposals without interactive review.
     """
     if target.is_file():
@@ -1516,7 +1516,7 @@ def main() -> None:
         "--max-ai-attempts",
         type=int,
         default=2,
-        help="Max LLM calls per violation (default: 2)",
+        help="Max retry attempts for AI proposals per file batch (default: 2)",
     )
     fix_parser.add_argument(
         "--ci",

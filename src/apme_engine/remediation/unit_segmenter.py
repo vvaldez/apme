@@ -100,7 +100,7 @@ def extract_units(
     total = len(lines)
     units: list[FixableUnit] = []
 
-    for key, node in node_index._by_key.items():  # noqa: SLF001
+    for key, node in node_index.items():
         node_file = str(node.get("file", ""))
         if not _paths_match(node_file, file_path):
             continue

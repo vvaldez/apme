@@ -88,48 +88,80 @@ The design prioritizes:
 
 ## AIProvider Protocol
 
-The engine's only dependency on AI is this protocol. See ADR-024.
+The engine's only dependency on AI is this protocol. See ADR-025.
 
 ```python
 from __future__ import annotations
 from typing import Protocol
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+@dataclass
+class AIPatch:
+    """A single task-level fix proposed by an AI provider."""
+    rule_id: str
+    line_start: int
+    line_end: int
+    fixed_lines: str
+    explanation: str
+    confidence: float
+    diff_hunk: str = ""
+
+@dataclass
+class AISkipped:
+    """A violation the AI could not fix, with an explanation."""
+    rule_id: str
+    line: int
+    reason: str
+    suggestion: str
 
 @dataclass
 class AIProposal:
-    """A validated AI-generated fix for a single violation."""
-    rule_id: str
+    """AI-generated fixes for a single file (batch of patches)."""
     file: str
     original_yaml: str
     fixed_yaml: str
-    explanation: str
-    confidence: float
+    patches: list[AIPatch]
     diff: str
-    hybrid_transforms_applied: int
+    skipped: list[AISkipped] = field(default_factory=list)
+    hybrid_transforms_applied: int = 0
 
 class AIProvider(Protocol):
-    async def propose_fix(
+    async def propose_fixes(
         self,
-        violation: ViolationDict,
+        violations: list[ViolationDict],
         file_content: str,
+        file_path: str,
         *,
         model: str | None = None,
         feedback: str | None = None,
-    ) -> AIProposal | None:
-        """Propose a fix for a single violation.
+    ) -> tuple[list[AIPatch] | None, list[AISkipped]]:
+        """Propose fixes for multiple violations in a single file (batch).
 
-        Returns None if the provider cannot produce a proposal
-        (parse error, empty response, provider unavailable).
+        Returns tuple of (patches or None on failure, skipped violations).
+        """
+        ...
 
-        The feedback parameter carries validation failure context
-        for retry attempts.
+    async def propose_unit_fixes(
+        self,
+        violations: list[ViolationDict],
+        snippet: str,
+        file_path: str,
+        line_start: int,
+        line_end: int,
+        *,
+        model: str | None = None,
+        feedback: str | None = None,
+    ) -> tuple[list[AIPatch] | None, list[AISkipped]]:
+        """Propose fixes for violations within a single unit (task snippet).
+
+        Line numbers in returned patches refer to the original file.
         """
         ...
 ```
 
 ### AbbenayProvider (Default Implementation)
 
-`src/apme_engine/remediation/abbenay_provider.py` -- the sole file that imports `abbenay_client`.
+`src/apme_engine/remediation/abbenay_provider.py` -- the sole file that imports `abbenay_grpc`.
 
 Responsibilities:
 
@@ -352,15 +384,14 @@ module_usage:
 
 The prompt builder loads `universal` + the matching category for each violation.
 
-### Maintenance SKILL
+### Maintenance
 
-`.cursor/skills/update-ansible-best-practices/SKILL.md` -- an agent skill that:
+The best practices YAML can be updated manually or via automation:
 
-1. Fetches the latest `agents.md` from upstream
-2. Parses markdown sections by heading hierarchy
-3. Diffs against the current mapping
-4. Updates the file, bumps `_meta.commit` and `_meta.updated`
-5. Flags changes for human review
+1. Fetch the latest guidelines from upstream Ansible documentation
+2. Parse and categorize by heading hierarchy
+3. Update `ansible_best_practices.yml`, bump `_meta.commit` and `_meta.updated`
+4. Review changes for accuracy
 
 ---
 

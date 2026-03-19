@@ -8,9 +8,9 @@
     MyAppVersion: "2.1"
     Server_Port: 8080
     # SEC: hardcoded credentials in playbook vars
-    api_key: sk-proj-not-real-but-looks-like-a-key-1234567890
-    db_password: SuperSecret123!
-    aws_secret: not-a-real-aws-secret-key-example-1234
+    api_key: EXAMPLE_API_KEY_NOT_A_SECRET
+    db_password: EXAMPLE_PASSWORD_NOT_A_SECRET
+    aws_secret: EXAMPLE_AWS_KEY_NOT_A_SECRET
   # L018: become_user without become
   become_user: deployer
   tasks:

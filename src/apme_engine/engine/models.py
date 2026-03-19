@@ -54,6 +54,7 @@ class RemediationResolution(str, Enum):
         AI_LOW_CONFIDENCE: AI returned a low-confidence proposal.
         USER_REJECTED: User rejected the proposed fix.
         NEEDS_CROSS_FILE: Requires cross-file context (deferred to MCP tool).
+        MANUAL: Requires manual review (play-level or structural issue).
     """
 
     UNRESOLVED = "unresolved"
@@ -64,6 +65,7 @@ class RemediationResolution(str, Enum):
     AI_LOW_CONFIDENCE = "ai-low-confidence"
     USER_REJECTED = "user-rejected"
     NEEDS_CROSS_FILE = "needs-cross-file"
+    MANUAL = "manual"
 
 
 from . import yaml as ariyaml  # noqa: E402

@@ -531,6 +531,16 @@ class RemediationEngine:
         if not all_patches and not all_skipped:
             return None
 
+        # Re-validate unit patches the same way as batch patches
+        is_valid, transforms_applied, feedback = self._validate_batch_patches(all_patches, file_path, file_content)
+
+        if not is_valid and feedback:
+            self._log(f"    Unit patches failed validation: {feedback.split(chr(10))[0]}")
+            # Mark as AI_FAILED instead of returning a broken proposal
+            for v in violations:
+                v["remediation_resolution"] = RemediationResolution.AI_FAILED
+            return None
+
         for v in violations:
             rid = str(v.get("rule_id", ""))
             patched_rules = {p.rule_id for p in all_patches}
@@ -558,6 +568,7 @@ class RemediationEngine:
             patches=all_patches,
             diff=full_diff,
             skipped=all_skipped,
+            hybrid_transforms_applied=transforms_applied,
         )
 
     async def _try_batch_proposal(
@@ -731,51 +742,51 @@ class RemediationEngine:
                 "Including them creates duplicates.",
             )
 
-        Path(file_path).write_text(patched, encoding="utf-8")
-        post_violations = self._scan_fn([file_path])
+        try:
+            Path(file_path).write_text(patched, encoding="utf-8")
+            post_violations = self._scan_fn([file_path])
 
-        new_violations = [
-            v for v in post_violations if (str(v.get("rule_id", "")), str(v.get("line", ""))) not in baseline_keys
-        ]
-
-        if not new_violations:
-            Path(file_path).write_text(original_content, encoding="utf-8")
-            return True, 0, None
-
-        # Hybrid cleanup: apply Tier 1 transforms to fix new issues
-        tier1, _, _ = partition_violations(new_violations, self._registry)
-        transforms_applied = 0
-
-        if tier1:
-            content = patched
-            tier1.sort(key=violation_line_to_int, reverse=True)
-
-            for v in tier1:
-                rule_id = normalize_rule_id(str(v.get("rule_id", "")))
-                result = self._registry.apply(rule_id, content, v)
-                if result.applied:
-                    content = result.content
-                    transforms_applied += 1
-
-            Path(file_path).write_text(content, encoding="utf-8")
-            remaining_all = self._scan_fn([file_path])
-            remaining_new = [
-                v for v in remaining_all if (str(v.get("rule_id", "")), str(v.get("line", ""))) not in baseline_keys
+            new_violations = [
+                v for v in post_violations if (str(v.get("rule_id", "")), str(v.get("line", ""))) not in baseline_keys
             ]
 
-            if not remaining_new:
-                Path(file_path).write_text(original_content, encoding="utf-8")
-                return True, transforms_applied, None
+            if not new_violations:
+                return True, 0, None
 
-            new_violations = remaining_new
+            # Hybrid cleanup: apply Tier 1 transforms to fix new issues
+            tier1, _, _ = partition_violations(new_violations, self._registry)
+            transforms_applied = 0
 
-        Path(file_path).write_text(original_content, encoding="utf-8")
-        feedback_lines = ["Your patches introduced new violations:"]
-        for v in new_violations[:5]:
-            feedback_lines.append(f"- {v.get('rule_id')}: {v.get('message')} (line {v.get('line')})")
-        if len(new_violations) > 5:
-            feedback_lines.append(f"  ... and {len(new_violations) - 5} more")
-        return False, transforms_applied, "\n".join(feedback_lines)
+            if tier1:
+                content = patched
+                tier1.sort(key=violation_line_to_int, reverse=True)
+
+                for v in tier1:
+                    rule_id = normalize_rule_id(str(v.get("rule_id", "")))
+                    result = self._registry.apply(rule_id, content, v)
+                    if result.applied:
+                        content = result.content
+                        transforms_applied += 1
+
+                Path(file_path).write_text(content, encoding="utf-8")
+                remaining_all = self._scan_fn([file_path])
+                remaining_new = [
+                    v for v in remaining_all if (str(v.get("rule_id", "")), str(v.get("line", ""))) not in baseline_keys
+                ]
+
+                if not remaining_new:
+                    return True, transforms_applied, None
+
+                new_violations = remaining_new
+
+            feedback_lines = ["Your patches introduced new violations:"]
+            for v in new_violations[:5]:
+                feedback_lines.append(f"- {v.get('rule_id')}: {v.get('message')} (line {v.get('line')})")
+            if len(new_violations) > 5:
+                feedback_lines.append(f"  ... and {len(new_violations) - 5} more")
+            return False, transforms_applied, "\n".join(feedback_lines)
+        finally:
+            Path(file_path).write_text(original_content, encoding="utf-8")
 
 
 def _chunk_violations(

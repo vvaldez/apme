@@ -87,6 +87,7 @@ def partition_violations(
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
         elif bare_id in PLAY_LEVEL_RULES:
+            v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
         elif v.get("ai_proposable", True):
             tier2.append(v)
@@ -109,7 +110,7 @@ def classify_violation(violation: ViolationDict, registry: TransformRegistry) ->
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if is_finding_resolvable(violation, registry):
         return RemediationClass.AUTO_FIXABLE
-    elif bare_id in CROSS_FILE_RULES:
+    elif bare_id in CROSS_FILE_RULES or bare_id in PLAY_LEVEL_RULES:
         return RemediationClass.MANUAL_REVIEW
     elif violation.get("ai_proposable", True):
         return RemediationClass.AI_CANDIDATE

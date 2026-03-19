@@ -1,6 +1,6 @@
-"""AbbenayProvider — default AIProvider implementation using abbenay_client.
+"""AbbenayProvider — default AIProvider implementation using abbenay_grpc.
 
-This is the sole file in the codebase that imports abbenay_client.
+This is the sole file in the codebase that imports abbenay_grpc.
 Install with: pip install apme-engine[ai]
 """
 
@@ -360,6 +360,7 @@ def _parse_batch_response(
     response_text: str,
     file_content: str,
     *,
+    min_line_override: int | None = None,
     max_line_override: int | None = None,
 ) -> tuple[list[AIPatch] | None, list[AISkipped]]:
     """Parse the LLM batch JSON response into patches and skipped entries.
@@ -367,6 +368,9 @@ def _parse_batch_response(
     Args:
         response_text: Raw text response from the LLM.
         file_content: Original file content (for line range validation).
+        min_line_override: If provided, use this as the minimum valid line number.
+            Used for unit-level parsing where patches must stay within the unit's
+            line range.
         max_line_override: If provided, use this as the max valid line number
             instead of counting lines in file_content.  Used for unit-level
             parsing where file_content is just the snippet but line numbers
@@ -394,7 +398,8 @@ def _parse_batch_response(
         logger.warning("AI response missing or invalid 'patches' field")
         return None, []
 
-    total_lines = max_line_override if max_line_override else len(file_content.splitlines())
+    min_line = min_line_override if min_line_override else 1
+    max_line = max_line_override if max_line_override else len(file_content.splitlines())
     result: list[AIPatch] = []
 
     for entry in raw_patches:
@@ -413,16 +418,17 @@ def _parse_batch_response(
 
         ls = int(line_start)  # type: ignore[arg-type]
         le = int(line_end)  # type: ignore[arg-type]
-        if ls < 1 or le < ls or ls > total_lines:
+        if ls < min_line or le < ls or ls > max_line:
             logger.warning(
-                "Skipping patch with invalid line range %d-%d (max line %d)",
+                "Skipping patch with invalid line range %d-%d (valid range %d-%d)",
                 ls,
                 le,
-                total_lines,
+                min_line,
+                max_line,
             )
             continue
 
-        le = min(le, total_lines)
+        le = min(le, max_line)
 
         fixed_str = str(fixed_lines)
 
@@ -515,9 +521,9 @@ def _extract_code_window(
 
 
 class AbbenayProvider:
-    """AIProvider implementation using the Abbenay daemon via abbenay_client.
+    """AIProvider implementation using the Abbenay daemon via abbenay_grpc.
 
-    This is the sole file that imports abbenay_client. The import is
+    This is the sole file that imports abbenay_grpc. The import is
     deferred to __init__ so the core package works without it installed.
     """
 
@@ -536,7 +542,7 @@ class AbbenayProvider:
             model: Optional default model (e.g. 'openai/gpt-4o').
 
         Raises:
-            ImportError: If abbenay_client is not installed.
+            ImportError: If abbenay_grpc is not installed.
         """
         try:
             from abbenay_grpc import AbbenayClient  # noqa: PLC0415
@@ -731,4 +737,4 @@ class AbbenayProvider:
         if not response_text.strip():
             return None, []
 
-        return _parse_batch_response(response_text, snippet, max_line_override=line_end)
+        return _parse_batch_response(response_text, snippet, min_line_override=line_start, max_line_override=line_end)
