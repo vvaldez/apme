@@ -1,4 +1,4 @@
-"""Tests for integrated engine scanner hierarchy payload (build_hierarchy_payload, _node_to_dict, apply_rules)."""
+"""Tests for integrated engine scanner hierarchy payload (build_hierarchy_payload, node_to_dict, apply_rules)."""
 
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
@@ -155,19 +155,15 @@ class TestScannerHierarchy:
         assert scan.findings.report["hierarchy_payload"] == scan.hierarchy_payload
         assert scan.result is None
 
-    def test_node_to_dict_no_spec(self, single_scan_with_mock_contexts: "SingleScan") -> None:
-        """_node_to_dict handles node without spec (file/line empty).
+    def test_node_to_dict_no_spec(self) -> None:
+        """node_to_dict handles node without spec (file/line empty)."""
+        from apme_engine.engine.opa_payload import node_to_dict
 
-        Args:
-            single_scan_with_mock_contexts: Fixture providing a SingleScan with mocked contexts.
-
-        """
-        scan = single_scan_with_mock_contexts
         node = MagicMock()
         node.type = "playcall"
         node.key = "k"
         node.spec = None
-        d = scan._node_to_dict(node)
+        d = node_to_dict(node)
         assert d["file"] == ""
         assert d["line"] is None
         assert d["defined_in"] == ""
