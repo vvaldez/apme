@@ -125,9 +125,51 @@ During fix passes, the Primary (or Remediation Engine) routes violations by rule
 
 Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable. The plugin receives one `TransformRequest` per violation, returns the fixed file (or `applied=false`), and the Primary writes the result back before rescanning.
 
-If a plugin's `Transform` returns an error or `applied=false` for a given violation, the violation is reclassified as `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` (Tier 2), matching the built-in remediation engine's handling of transform failures.
+If a plugin's `Transform` returns an error or `applied=false` for a given violation, the violation is reclassified as `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` (Tier 2), matching the built-in remediation engine's handling of transform failures. The violation then enters the AI escalation path described below.
 
-### 5. Data contract
+### 5. AI escalation for plugin violations
+
+When plugin violations reach Tier 2 (no transform registered, or transform failed), they enter AI-assisted remediation. Plugin violations require different handling than built-in violations because APME's AI prompts are tuned for built-in rules and have no domain knowledge about third-party checks.
+
+#### AI guidance via violation metadata
+
+Plugins supply AI context through the existing `Violation.metadata` map using a reserved key:
+
+```
+metadata["ai_guidance"] = "This violation fires when a play is missing a department tag. To fix it, add a 'tags' key to the play with at least one tag prefixed 'dept:'. Example: tags: [dept:platform]. The department must match one from the org's approved list."
+```
+
+The `ai_guidance` value is a free-form string containing whatever context the plugin author believes an AI agent needs to propose a fix: what the rule checks, how to resolve it, constraints, examples, or links to internal documentation. If `ai_guidance` is absent, the AI falls back to the violation's `message` and `level` fields.
+
+The SDK provides a convenience parameter:
+
+```python
+self.violation(
+    rule_id="001",
+    level="warning",
+    message="Plays must have a department tag",
+    file=node["file"],
+    line=node["line"][0],
+    ai_guidance="Add a 'tags' key with at least one dept: prefixed tag. "
+                "Valid departments: platform, security, network, app.",
+)
+```
+
+#### Per-plugin batching
+
+Third-party violations are **not** combined with built-in violations during AI passes. The remediation engine partitions Tier 2 violations by origin:
+
+- **Built-in violations** (L/M/R/P/SEC prefixes) — batched together and processed with APME's built-in AI prompts, as today.
+- **Plugin violations** — grouped by plugin (by rule ID prefix, e.g., all `EXT-secteam-*` together). Each plugin group is processed as a **separate AI pass** using the `ai_guidance` from the violations' metadata.
+- Violations from **different plugins** are never combined in the same AI pass — each plugin's domain context is distinct.
+
+This separation ensures:
+
+- Built-in AI prompts are not diluted by unrelated third-party context.
+- Plugin-provided `ai_guidance` is used coherently within its own domain.
+- AI proposals for plugin violations are attributable to the correct plugin for review.
+
+### 6. Data contract
 
 Plugins receive the following data in `ValidateRequest`:
 
@@ -143,7 +185,7 @@ The underlying `ValidateRequest` protobuf message also defines `scandata` as fie
 
 The `hierarchy_payload` JSON schema should be documented as a versioned public contract (future work — not blocking this ADR).
 
-### 6. Python SDK (`apme-plugin-sdk`)
+### 7. Python SDK (`apme-plugin-sdk`)
 
 The plugin system is not viable without a low-friction authoring experience. The SDK is part of this decision, not a follow-up.
 
@@ -181,6 +223,8 @@ class MyOrgPlugin(PluginBase):
                         message="Plays must have a department tag",
                         file=node["file"],
                         line=node["line"][0],
+                        ai_guidance="Add a 'tags' key with at least one dept:-prefixed tag. "
+                                    "Valid departments: platform, security, network, app.",
                     ))
         return violations
 
@@ -217,7 +261,7 @@ if __name__ == "__main__":
 
 **Template project:** A cookiecutter/copier template providing Containerfile, `pyproject.toml`, example plugin, Makefile with build/test/run targets.
 
-### 7. Monorepo with shared proto
+### 8. Monorepo with shared proto
 
 The SDK must share proto definitions with the main engine. The repo becomes multiroot:
 
@@ -332,6 +376,7 @@ apme-reviews/
 - Built-in validators and TransformRegistry are completely unchanged
 - Plugin violations appear in the same output/report as built-in violations (distinguished by EXT- prefix)
 - The convergence loop (scan -> fix -> rescan) works identically for plugin transforms
+- AI escalation for plugin violations uses the same Tier 2 infrastructure but with plugin-supplied context instead of built-in prompts
 
 ## Implementation Notes
 
@@ -356,7 +401,14 @@ apme-reviews/
 3. Integrate plugin transforms into the convergence loop
 4. Update `launcher.py` if plugins should be discoverable in local daemon mode
 
-### Phase 4: Developer experience
+### Phase 4: AI escalation
+
+1. Partition Tier 2 violations by origin (built-in vs each plugin prefix)
+2. Process each plugin's violations as a separate AI pass using `ai_guidance` from metadata
+3. Construct plugin-specific AI prompts that include the `ai_guidance` strings
+4. Ensure AI proposals for plugin violations are attributed to the originating plugin
+
+### Phase 5: Developer experience
 
 1. Publish `apme-plugin-sdk` to PyPI
 2. Create cookiecutter/copier template repo
@@ -370,6 +422,7 @@ apme-reviews/
 - ADR-007: Async gRPC servers (plugins should follow this pattern)
 - ADR-008: Rule ID conventions — extended with `EXT-` prefix for plugins
 - ADR-009: Validators are read-only; remediation is separate (plugins are exempt as they own both sides)
+- ADR-025: AI provider protocol — plugin AI escalation uses the same Tier 2 infrastructure
 - ADR-026: Rule scope metadata — plugins should set `scope` on violations
 
 ## References
@@ -387,3 +440,4 @@ apme-reviews/
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-20 | APME Team | Initial proposal |
+| 2026-03-20 | APME Team | Add AI escalation: per-plugin batching and ai_guidance metadata |
