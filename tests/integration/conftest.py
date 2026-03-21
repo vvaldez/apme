@@ -55,15 +55,22 @@ def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
-    """Start daemon if any integration-marked tests survived deselection.
+    """Start daemon if integration-marked tests will actually run.
+
+    This hook fires *before* pytest applies ``-m`` deselection, so we must
+    check ``markexpr`` ourselves to avoid starting the daemon when the
+    session runs with ``-m 'not integration'`` (the default addopts).
 
     Args:
         config: Pytest config object.
-        items: Collected test items after marker-based deselection.
+        items: Collected test items (before marker-based deselection).
     """
     if config.option.collectonly:
         return
     if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    markexpr = getattr(config.option, "markexpr", "") or ""
+    if "not integration" in markexpr:
         return
     has_integration = any(item.get_closest_marker("integration") for item in items)
     if has_integration and INFRASTRUCTURE is None:
