@@ -31,15 +31,223 @@ import fcntl
 import json
 import os
 import shutil
+import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from apme_engine.collection_cache.config import get_cache_root
-from apme_engine.collection_cache.venv_builder import (
-    create_base_venv,
-    install_collections_incremental,
-)
+
+_PROXY_ENV = "APME_GALAXY_PROXY_URL"
+
+
+def _proxy_url() -> str | None:
+    """Return the galaxy proxy URL if configured, else None.
+
+    Returns:
+        The proxy URL string, or None if not set.
+    """
+    return os.environ.get(_PROXY_ENV, "").strip() or None
+
+
+def _uv_available() -> bool:
+    """Check if uv is available on PATH.
+
+    Returns:
+        True if uv executable is found, False otherwise.
+    """
+    return shutil.which("uv") is not None
+
+
+def get_venv_python(venv_root: Path) -> Path:
+    """Return the python executable inside the venv.
+
+    Args:
+        venv_root: Root path of the virtual environment.
+
+    Returns:
+        Path to the python executable.
+
+    Raises:
+        FileNotFoundError: If venv has no python executable.
+    """
+    exe = venv_root / "Scripts" / "python.exe" if os.name == "nt" else venv_root / "bin" / "python"
+    if not exe.is_file():
+        raise FileNotFoundError(f"venv has no python: {venv_root}")
+    return exe
+
+
+def _venv_site_packages(venv_root: Path) -> Path:
+    """Return site-packages path for a venv (e.g. venv/lib/python3.12/site-packages).
+
+    Args:
+        venv_root: Root path of the virtual environment.
+
+    Returns:
+        Path to site-packages directory.
+
+    Raises:
+        FileNotFoundError: If venv has no lib dir or pythonX.Y directory.
+    """
+    lib = venv_root / "lib"
+    if not lib.is_dir():
+        raise FileNotFoundError(f"venv has no lib dir: {venv_root}")
+    py_dirs = list(lib.glob("python*"))
+    if not py_dirs:
+        raise FileNotFoundError(f"venv has no pythonX.Y in lib: {venv_root}")
+    site = py_dirs[0] / "site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    return site
+
+
+def _spec_to_pip(spec: str) -> str:
+    """Convert a collection spec to a pip package name.
+
+    ``community.general:9.0.0`` -> ``ansible-collection-community-general==9.0.0``
+    ``ansible.posix``           -> ``ansible-collection-ansible-posix``
+
+    Args:
+        spec: Collection specifier (namespace.collection or namespace.collection:version).
+
+    Returns:
+        pip-installable package specifier.
+
+    Raises:
+        ValueError: If spec does not contain a dot (expected namespace.collection).
+    """
+    base = spec.split(":")[0].strip()
+    if "." not in base:
+        raise ValueError(f"Invalid collection spec (expected namespace.collection): {spec}")
+    namespace, collection = base.split(".", 1)
+    pkg = f"ansible-collection-{namespace}-{collection}"
+    if ":" in spec:
+        version = spec.split(":", 1)[1].strip()
+        if version:
+            pkg += f"=={version}"
+    return pkg
+
+
+def _install_collections_via_proxy(
+    pip_python: Path,
+    collection_specs: list[str],
+    proxy_url: str,
+    use_uv: bool,
+) -> None:
+    """Install collections into the venv via the galaxy proxy (PEP 503).
+
+    Args:
+        pip_python: Python interpreter inside the venv.
+        collection_specs: Collection specifiers to install.
+        proxy_url: Base URL of the galaxy proxy.
+        use_uv: Whether to use uv for installation.
+
+    Raises:
+        subprocess.CalledProcessError: When the pip/uv install command fails.
+    """
+    simple_url = proxy_url.rstrip("/") + "/simple/"
+    pip_specs = [_spec_to_pip(s) for s in collection_specs]
+
+    if use_uv:
+        cmd = [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(pip_python),
+            "--extra-index-url",
+            simple_url,
+            *pip_specs,
+        ]
+    else:
+        cmd = [
+            str(pip_python),
+            "-m",
+            "pip",
+            "install",
+            "--extra-index-url",
+            simple_url,
+            *pip_specs,
+        ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(f"Warning: proxy collection install failed: {result.stderr or result.stdout}\n")
+        sys.stderr.flush()
+        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+
+
+def create_base_venv(
+    venv_dir: Path,
+    ansible_core_version: str,
+    python_exe: str | None = None,
+) -> None:
+    """Create a virtual environment and install ansible-core into it.
+
+    Args:
+        venv_dir: Exact directory for the virtualenv (created if absent).
+        ansible_core_version: Pip-compatible version, e.g. ``"2.17.0"``.
+        python_exe: Python interpreter for ``uv venv --python`` (optional).
+    """
+    use_uv = _uv_available()
+    if use_uv:
+        cmd = ["uv", "venv", str(venv_dir)]
+        if python_exe:
+            cmd.extend(["--python", python_exe])
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    else:
+        cmd = [sys.executable, "-m", "venv", str(venv_dir)]
+        if python_exe:
+            cmd = [python_exe, "-m", "venv", str(venv_dir)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    pip_python = get_venv_python(venv_dir)
+    if use_uv:
+        subprocess.run(
+            ["uv", "pip", "install", "--python", str(pip_python), f"ansible-core=={ansible_core_version}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        subprocess.run(
+            [str(pip_python), "-m", "pip", "install", f"ansible-core=={ansible_core_version}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+
+def install_collections_incremental(
+    venv_dir: Path,
+    collection_specs: list[str],
+) -> None:
+    """Install collections into an existing venv via the galaxy proxy.
+
+    Uses ``APME_GALAXY_PROXY_URL`` to install collections as pip packages
+    through the proxy's PEP 503 simple index.  Safe to call repeatedly
+    with overlapping specs — already-installed packages are no-ops.
+
+    Args:
+        venv_dir: Root of the virtualenv (must already exist with ansible-core).
+        collection_specs: Collection specifiers to install.
+
+    Raises:
+        RuntimeError: If APME_GALAXY_PROXY_URL is not configured.
+    """
+    if not collection_specs:
+        return
+
+    proxy = _proxy_url()
+    if not proxy:
+        raise RuntimeError(
+            "APME_GALAXY_PROXY_URL must be set. The galaxy proxy is the sole collection installation path."
+        )
+
+    pip_python = get_venv_python(venv_dir)
+    use_uv = _uv_available()
+    _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+
 
 _DEFAULT_TTL = 3600
 

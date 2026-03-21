@@ -17,14 +17,13 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import cast
 
 import pytest
-from collections.abc import Generator
 
-from apme_engine.collection_cache.venv_builder import _venv_site_packages
-from apme_engine.collection_cache.venv_session import VenvSession, VenvSessionManager
+from apme_engine.collection_cache.venv_session import VenvSession, VenvSessionManager, _venv_site_packages
 from apme_engine.runner import run_scan
 from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator

@@ -333,7 +333,6 @@ class TestAnsibleValidatorServicerMigration:
                     AnsibleRuleTiming(rule_id="L057", elapsed_ms=120.0, violations=1),
                 ],
             ),
-            venv_build_ms=850.0,
             ansible_core_version="2.18",
         )
 
@@ -351,7 +350,6 @@ class TestAnsibleValidatorServicerMigration:
         assert diag.rule_timings[0].rule_id == "L057"
         assert diag.rule_timings[0].elapsed_ms == pytest.approx(120.0)
         assert diag.metadata["ansible_core_version"] == "2.18"
-        assert diag.metadata["venv_build_ms"] == "850.0"
 
 
 class TestPrimaryFanOut:

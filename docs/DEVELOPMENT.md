@@ -156,9 +156,8 @@ src/apme_engine/
 │   └── violation_convert.py  dict ↔ proto Violation conversion
 │
 └── collection_cache/       Session venv management (VenvSessionManager)
-    ├── config.py            Cache paths / configuration
-    ├── manager.py           Galaxy + GitHub pull operations
-    ├── venv_builder.py / venv_session.py  Session venv lifecycle (VenvSessionManager)
+    ├── config.py            Data-root path configuration
+    ├── venv_session.py      Session venv lifecycle (VenvSessionManager, galaxy proxy)
     └── _fqcn_resolve.py     FQCN resolution against cache
 ```
 
@@ -292,7 +291,7 @@ tests/
 ├── test_formatter.py              YAML formatter tests (transforms, idempotency)
 ├── test_validators.py             Validator tests
 ├── test_validator_servicers.py    async gRPC servicer tests (pytest-asyncio)
-├── test_collection_cache_venv_builder.py
+├── test_session_venv_e2e.py           Session venv + galaxy proxy e2e tests
 ├── test_rule_doc_coverage.py      Asserts every rule has a .md doc
 ├── rule_doc_parser.py             Parses rule .md frontmatter
 ├── rule_doc_integration_test.py   Runs .md examples through engine

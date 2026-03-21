@@ -352,7 +352,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         Returns:
             Tuple of (violations, ScanDiagnostics or None, resolved session_id).
         """
-        from apme_engine.collection_cache.venv_builder import _venv_site_packages
+        from apme_engine.collection_cache.venv_session import _venv_site_packages
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
 
         scan_t0 = time.monotonic()

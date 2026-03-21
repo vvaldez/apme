@@ -1,11 +1,15 @@
-"""Ansible validator daemon: async gRPC adapter with cached venvs."""
+"""Ansible validator daemon: async gRPC adapter using session-scoped venvs.
+
+The Primary orchestrator owns venv lifecycle (creation, collection install,
+reaping).  This validator receives a ready-to-use ``venv_path`` in every
+``ValidateRequest`` and runs Ansible rules against it read-only.
+"""
 
 import asyncio
 import contextlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -19,15 +23,10 @@ import grpc.aio
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
-from apme_engine.collection_cache.config import get_cache_root
-from apme_engine.collection_cache.venv_builder import build_venv
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict, YAMLDict
 from apme_engine.validators.ansible import AnsibleRunResult, AnsibleValidator
-from apme_engine.validators.ansible._venv import (
-    DEFAULT_VERSION,
-    setup_collections_env,
-)
+from apme_engine.validators.ansible._venv import DEFAULT_VERSION
 from apme_engine.validators.base import ScanContext
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ANSIBLE_MAX_RPCS", "8"))
@@ -39,25 +38,11 @@ class _AnsibleResult:
 
     Attributes:
         run_result: Violations and rule timings from AnsibleValidator.
-        venv_build_ms: Time spent building ephemeral venv in milliseconds.
         ansible_core_version: Ansible core version string used.
     """
 
     run_result: AnsibleRunResult
-    venv_build_ms: float = 0.0
     ansible_core_version: str = ""
-
-
-def _cache_root() -> Path:
-    """Resolve cache root from APME_CACHE_ROOT or get_cache_root().
-
-    Returns:
-        Resolved Path to the collection cache root.
-    """
-    root = os.environ.get("APME_CACHE_ROOT", "").strip()
-    if root:
-        return Path(root).resolve()
-    return get_cache_root()
 
 
 def _write_chunked_fs(files: list[File]) -> Path:
@@ -80,85 +65,55 @@ def _write_chunked_fs(files: list[File]) -> Path:
 def _run_ansible_validate(
     files: list[File],
     raw_version: str,
-    collection_specs: list[str],
     hierarchy_payload: YAMLDict,
     req_id: str,
-    venv_path: str = "",
+    venv_path: str,
 ) -> _AnsibleResult:
-    """Blocking function: use provided venv or build/reuse cached venv, run validator.
-
-    When ``venv_path`` is set (Primary already prepared a session-scoped venv),
-    it is used directly — no ``build_venv`` call.  Otherwise falls back to
-    the legacy ``build_venv`` path for backward compatibility.
+    """Run Ansible validation against a session-scoped venv provided by Primary.
 
     Args:
         files: List of File protos to validate.
         raw_version: Ansible core version string.
-        collection_specs: Collection specs to install.
         hierarchy_payload: Parsed hierarchy payload for context.
         req_id: Request ID for logging.
-        venv_path: Pre-built venv path from Primary (read-only).
+        venv_path: Session venv path from Primary (read-only).
 
     Returns:
-        _AnsibleResult with violations, venv build time, and version.
+        _AnsibleResult with violations and version.
     """
     temp_dir = None
-    venv_root = None
-    venv_build_ms = 0.0
+    venv_root = Path(venv_path) if venv_path else None
 
     try:
         temp_dir = _write_chunked_fs(files)
-        cache = _cache_root()
 
-        tv = time.monotonic()
-
-        if venv_path:
-            venv_root = Path(venv_path)
-            venv_build_ms = (time.monotonic() - tv) * 1000
-            sys.stderr.write(f"[req={req_id}] Ansible: using session venv {venv_path} (0ms build)\n")
+        if venv_root is None:
+            sys.stderr.write(f"[req={req_id}] Ansible: no venv_path provided, skipping\n")
             sys.stderr.flush()
-        else:
-            try:
-                venv_root = build_venv(
-                    ansible_core_version=raw_version,
-                    collection_specs=collection_specs,
-                    cache_root=cache,
-                )
-            except (FileNotFoundError, subprocess.CalledProcessError) as e:
-                venv_build_ms = (time.monotonic() - tv) * 1000
-                sys.stderr.write(f"[req={req_id}] Ansible: venv build failed for {raw_version}: {e}\n")
-                sys.stderr.flush()
-                err_viol: ViolationDict = {
-                    "rule_id": "L057",
-                    "level": "error",
-                    "message": f"Venv build failed for {raw_version}: {e}",
-                    "file": "",
-                    "line": 1,
-                    "path": "",
-                }
-                return _AnsibleResult(
-                    run_result=AnsibleRunResult(violations=[err_viol]),  # type: ignore[list-item]
-                    venv_build_ms=venv_build_ms,
-                    ansible_core_version=raw_version,
-                )
-            venv_build_ms = (time.monotonic() - tv) * 1000
-            sys.stderr.write(f"[req={req_id}] Ansible: venv ready in {venv_build_ms:.0f}ms\n")
-            sys.stderr.flush()
+            err_viol: ViolationDict = {
+                "rule_id": "L057",
+                "level": "error",
+                "message": "No session venv provided by Primary orchestrator",
+                "file": "",
+                "line": 1,
+                "path": "",
+            }
+            return _AnsibleResult(
+                run_result=AnsibleRunResult(violations=[err_viol]),  # type: ignore[list-item]
+                ansible_core_version=raw_version,
+            )
 
-        env_extra = None
-        if collection_specs:
-            with contextlib.suppress(Exception):
-                env_extra = setup_collections_env(collection_specs, cache)
+        sys.stderr.write(f"[req={req_id}] Ansible: using session venv {venv_path}\n")
+        sys.stderr.flush()
 
         scan_context = ScanContext(
             hierarchy_payload=hierarchy_payload,
             root_dir=str(temp_dir),
         )
-        validator = AnsibleValidator(venv_root=venv_root, env_extra=env_extra)
+        validator = AnsibleValidator(venv_root=venv_root)
         run_result = validator.run_with_timing(scan_context)
         return _AnsibleResult(
             run_result=run_result,
-            venv_build_ms=venv_build_ms,
             ansible_core_version=raw_version,
         )
     except Exception as e:
@@ -177,7 +132,6 @@ def _run_ansible_validate(
         }
         return _AnsibleResult(
             run_result=AnsibleRunResult(violations=[err_viol_exc]),  # type: ignore[list-item]
-            venv_build_ms=venv_build_ms,
             ansible_core_version=raw_version,
         )
     finally:
@@ -190,10 +144,10 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
     """Async gRPC adapter: builds/reuses cached venv, runs AnsibleValidator."""
 
     async def Validate(self, request: ValidateRequest, context: grpc.aio.ServicerContext) -> ValidateResponse:  # type: ignore[type-arg]
-        """Handle Validate RPC: build/reuse venv, run AnsibleValidator, return violations.
+        """Handle Validate RPC: run AnsibleValidator against session venv.
 
         Args:
-            request: ValidateRequest with files, version, collection specs.
+            request: ValidateRequest with files, version, and venv_path.
             context: gRPC servicer context.
 
         Returns:
@@ -206,7 +160,6 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 return ValidateResponse(violations=[], request_id=req_id)
 
             raw_version = (request.ansible_core_version or "").strip() or DEFAULT_VERSION
-            collection_specs = [s.strip() for s in (request.collection_specs or []) if s.strip()]
 
             hierarchy_payload: YAMLDict = {}
             if request.hierarchy_payload:
@@ -217,7 +170,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
 
             sys.stderr.write(
                 f"[req={req_id}] Ansible: {len(request.files)} files, "
-                f"core={raw_version}, specs={len(collection_specs)}\n"
+                f"core={raw_version}, venv={request.venv_path or '(none)'}\n"
             )
             sys.stderr.flush()
 
@@ -226,7 +179,6 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 _run_ansible_validate,  # type: ignore[arg-type]
                 list(request.files),
                 raw_version,
-                collection_specs,
                 hierarchy_payload,
                 req_id,
                 request.venv_path or "",
@@ -255,7 +207,6 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 rule_timings=rule_timings,
                 metadata={
                     "ansible_core_version": result.ansible_core_version,
-                    "venv_build_ms": f"{result.venv_build_ms:.1f}",
                 },
             )
 
