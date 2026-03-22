@@ -21,6 +21,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="no_ansi",
         help="Disable ANSI color output",
     )
+    global_opts.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="-v for summary + pipeline logs, -vv for full per-rule breakdown",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # ── scan ──
@@ -41,13 +48,6 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=None,
         help="Collection specs to make available (e.g. community.general:9.0.0)",
-    )
-    scan_p.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="-v for summary, -vv for full per-rule breakdown",
     )
     scan_p.add_argument(
         "--timeout",

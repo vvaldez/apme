@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -36,6 +37,8 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger("apme.venv")
 
 _PROXY_ENV = "APME_GALAXY_PROXY_URL"
 
@@ -185,8 +188,7 @@ def _install_collections_via_proxy(
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        sys.stderr.write(f"Warning: proxy collection install failed: {result.stderr or result.stdout}\n")
-        sys.stderr.flush()
+        logger.warning("Proxy collection install failed: %s", result.stderr or result.stdout)
         raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
 
 
@@ -388,6 +390,9 @@ class VenvSessionManager:
         meta_path = version_dir / "meta.json"
         venv_dir = version_dir / "venv"
 
+        logger.info("Venv: acquiring session=%s core=%s", session_id, pip_version)
+        t0 = time.monotonic()
+
         with open(lock_path, "w") as lock_fd:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             try:
@@ -401,20 +406,35 @@ class VenvSessionManager:
                     if not missing:
                         existing.last_used_at = time.time()
                         self._write_version_meta(meta_path, existing)
+                        dur = (time.monotonic() - t0) * 1000
+                        logger.info(
+                            "Venv: ready (%.0fms, warm hit, %d collections)",
+                            dur,
+                            len(existing.installed_collections),
+                        )
                         return existing
 
+                    logger.debug("Venv: installing %d missing collections", len(missing))
                     install_collections_incremental(venv_dir, sorted(missing))
                     existing.installed_collections = sorted(installed | set(specs))
                     existing.last_used_at = time.time()
                     self._write_version_meta(meta_path, existing)
+                    dur = (time.monotonic() - t0) * 1000
+                    logger.info(
+                        "Venv: ready (%.0fms, incremental, %d collections)",
+                        dur,
+                        len(existing.installed_collections),
+                    )
                     return existing
 
                 version_dir.mkdir(parents=True, exist_ok=True)
                 if venv_dir.is_dir():
                     shutil.rmtree(venv_dir)
 
+                logger.info("Venv: cold start — creating venv core=%s", pip_version)
                 create_base_venv(venv_dir, pip_version)
                 if specs:
+                    logger.debug("Venv: installing %d collections", len(specs))
                     install_collections_incremental(venv_dir, specs)
 
                 now = time.time()
@@ -427,6 +447,12 @@ class VenvSessionManager:
                     last_used_at=now,
                 )
                 self._write_version_meta(meta_path, session)
+                dur = (time.monotonic() - t0) * 1000
+                logger.info(
+                    "Venv: ready (%.0fms, cold start, %d collections)",
+                    dur,
+                    len(specs),
+                )
                 return session
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)

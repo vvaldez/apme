@@ -6,8 +6,8 @@ No OPA REST server required — the OPA binary is invoked via subprocess.
 
 import asyncio
 import json
+import logging
 import os
-import sys
 import time
 from typing import cast
 
@@ -19,8 +19,11 @@ from apme.v1.common_pb2 import HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateResponse
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict, YAMLDict
+from apme_engine.log_bridge import attach_collector
 from apme_engine.validators.base import ScanContext
 from apme_engine.validators.opa import OpaValidator
+
+logger = logging.getLogger("apme.opa")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_OPA_MAX_RPCS", "32"))
 
@@ -61,55 +64,55 @@ class OpaValidatorServicer(validate_pb2_grpc.ValidatorServicer):
         """
         req_id = request.request_id or ""
         t0 = time.monotonic()
-        violations: list[ViolationDict] = []
-        try:
-            hierarchy_payload: dict[str, object] = {}
-            if request.hierarchy_payload:
-                try:
-                    hierarchy_payload = json.loads(request.hierarchy_payload)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    sys.stderr.write(f"[req={req_id}] OPA: failed to decode hierarchy_payload\n")
-                    return ValidateResponse(violations=[], request_id=req_id)
+        with attach_collector() as sink:
+            violations: list[ViolationDict] = []
+            try:
+                logger.info("OPA: validate start (req=%s)", req_id)
 
-            violations = await asyncio.get_event_loop().run_in_executor(
-                None,
-                _run_opa,
-                hierarchy_payload,
-            )
+                hierarchy_payload: dict[str, object] = {}
+                if request.hierarchy_payload:
+                    try:
+                        hierarchy_payload = json.loads(request.hierarchy_payload)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        logger.warning("OPA: failed to decode hierarchy_payload (req=%s)", req_id)
+                        return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+
+                violations = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _run_opa,
+                    hierarchy_payload,
+                )
+                total_ms = (time.monotonic() - t0) * 1000
+                logger.info("OPA: validate done (%.0fms, %d violations, req=%s)", total_ms, len(violations), req_id)
+            except Exception as e:
+                logger.exception("OPA: unhandled error (req=%s): %s", req_id, e)
+                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+
             total_ms = (time.monotonic() - t0) * 1000
-            sys.stderr.write(f"[req={req_id}] OPA: {len(violations)} violation(s) in {total_ms:.1f}ms\n")
-            sys.stderr.flush()
-        except Exception as e:
-            import traceback
 
-            sys.stderr.write(f"[req={req_id}] OPA error: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
-            return ValidateResponse(violations=[], request_id=req_id)
+            from collections import Counter
 
-        total_ms = (time.monotonic() - t0) * 1000
+            rule_counts = Counter(v.get("rule_id", "unknown") for v in violations)
+            rule_timings = [
+                RuleTiming(rule_id=str(rid), elapsed_ms=0.0, violations=count)
+                for rid, count in sorted(rule_counts.items())
+            ]
 
-        from collections import Counter
+            diag = ValidatorDiagnostics(
+                validator_name="opa",
+                request_id=req_id,
+                total_ms=total_ms,
+                files_received=len(request.files),
+                violations_found=len(violations),
+                rule_timings=rule_timings,
+            )
 
-        rule_counts = Counter(v.get("rule_id", "unknown") for v in violations)
-        rule_timings = [
-            RuleTiming(rule_id=str(rid), elapsed_ms=0.0, violations=count) for rid, count in sorted(rule_counts.items())
-        ]
-
-        diag = ValidatorDiagnostics(
-            validator_name="opa",
-            request_id=req_id,
-            total_ms=total_ms,
-            files_received=len(request.files),
-            violations_found=len(violations),
-            rule_timings=rule_timings,
-        )
-
-        return ValidateResponse(
-            violations=[violation_dict_to_proto(v) for v in violations],
-            request_id=req_id,
-            diagnostics=diag,
-        )
+            return ValidateResponse(
+                violations=[violation_dict_to_proto(v) for v in violations],
+                request_id=req_id,
+                diagnostics=diag,
+                logs=sink.entries,
+            )
 
     async def Health(
         self,

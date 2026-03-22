@@ -2,8 +2,8 @@
 
 import asyncio
 import json
+import logging
 import os
-import sys
 import time
 from typing import cast
 
@@ -16,8 +16,11 @@ from apme.v1.common_pb2 import HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateResponse
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict, YAMLDict
+from apme_engine.log_bridge import attach_collector
 from apme_engine.validators.base import ScanContext
 from apme_engine.validators.native import NativeRunResult, NativeValidator
+
+logger = logging.getLogger("apme.native")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_NATIVE_MAX_RPCS", "32"))
 
@@ -59,78 +62,77 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
         """
         req_id = request.request_id or ""
         t0 = time.monotonic()
-        try:
-            hierarchy_payload: dict[str, object] = {}
-            if request.hierarchy_payload:
-                try:
-                    hierarchy_payload = json.loads(request.hierarchy_payload)
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    sys.stderr.write(f"[req={req_id}] Native: failed to decode hierarchy_payload\n")
+        with attach_collector() as sink:
+            try:
+                logger.info("Native: validate start (req=%s)", req_id)
 
-            scandata = None
-            if request.scandata:
-                try:
-                    # Ensure engine classes and jsonpickle handlers are loaded so decode
-                    # restores AnsibleRunContext (not list_iterator) and nested types.
-                    from apme_engine.engine import jsonpickle_handlers as _jp  # noqa: F401
-                    from apme_engine.engine import models as _models  # noqa: F401
-                    from apme_engine.engine import scanner as _scanner  # noqa: F401
+                hierarchy_payload: dict[str, object] = {}
+                if request.hierarchy_payload:
+                    try:
+                        hierarchy_payload = json.loads(request.hierarchy_payload)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        logger.warning("Native: failed to decode hierarchy_payload (req=%s)", req_id)
 
-                    _jp.register_engine_handlers()
-                    for name in ("SingleScan",):
-                        getattr(_scanner, name, None)
-                    for name in (
-                        "AnsibleRunContext",
-                        "RunTargetList",
-                        "RunTarget",
-                        "TaskCall",
-                        "Object",
-                    ):
-                        getattr(_models, name, None)
-                    scandata = jsonpickle.decode(request.scandata.decode("utf-8"))
-                except Exception as e:
-                    sys.stderr.write(f"[req={req_id}] Native: failed to decode scandata: {e}\n")
-                    return ValidateResponse(violations=[], request_id=req_id)
+                scandata = None
+                if request.scandata:
+                    try:
+                        from apme_engine.engine import jsonpickle_handlers as _jp  # noqa: F401
+                        from apme_engine.engine import models as _models  # noqa: F401
+                        from apme_engine.engine import scanner as _scanner  # noqa: F401
 
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                _run_native,
-                hierarchy_payload,
-                scandata,
-            )
-            total_ms = (time.monotonic() - t0) * 1000
-            sys.stderr.write(f"[req={req_id}] Native: {len(result.violations)} violation(s) in {total_ms:.1f}ms\n")
-            sys.stderr.flush()
+                        _jp.register_engine_handlers()
+                        for name in ("SingleScan",):
+                            getattr(_scanner, name, None)
+                        for name in (
+                            "AnsibleRunContext",
+                            "RunTargetList",
+                            "RunTarget",
+                            "TaskCall",
+                            "Object",
+                        ):
+                            getattr(_models, name, None)
+                        scandata = jsonpickle.decode(request.scandata.decode("utf-8"))
+                    except Exception as e:
+                        logger.error("Native: failed to decode scandata: %s (req=%s)", e, req_id)
+                        return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
-            rule_timings = [
-                RuleTiming(
-                    rule_id=rt.rule_id,
-                    elapsed_ms=rt.elapsed_ms,
-                    violations=rt.violations,
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _run_native,
+                    hierarchy_payload,
+                    scandata,
                 )
-                for rt in result.rule_timings
-            ]
-            diag = ValidatorDiagnostics(
-                validator_name="native",
-                request_id=req_id,
-                total_ms=total_ms,
-                files_received=len(request.files),
-                violations_found=len(result.violations),
-                rule_timings=rule_timings,
-            )
+                total_ms = (time.monotonic() - t0) * 1000
+                logger.info(
+                    "Native: validate done (%.0fms, %d violations, req=%s)", total_ms, len(result.violations), req_id
+                )
 
-            return validate_pb2.ValidateResponse(
-                violations=[violation_dict_to_proto(cast(ViolationDict, v)) for v in result.violations],
-                request_id=req_id,
-                diagnostics=diag,
-            )
-        except Exception as e:
-            import traceback
+                rule_timings = [
+                    RuleTiming(
+                        rule_id=rt.rule_id,
+                        elapsed_ms=rt.elapsed_ms,
+                        violations=rt.violations,
+                    )
+                    for rt in result.rule_timings
+                ]
+                diag = ValidatorDiagnostics(
+                    validator_name="native",
+                    request_id=req_id,
+                    total_ms=total_ms,
+                    files_received=len(request.files),
+                    violations_found=len(result.violations),
+                    rule_timings=rule_timings,
+                )
 
-            sys.stderr.write(f"[req={req_id}] Native error: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
-            return ValidateResponse(violations=[], request_id=req_id)
+                return validate_pb2.ValidateResponse(
+                    violations=[violation_dict_to_proto(cast(ViolationDict, v)) for v in result.violations],
+                    request_id=req_id,
+                    diagnostics=diag,
+                    logs=sink.entries,
+                )
+            except Exception as e:
+                logger.exception("Native: unhandled error (req=%s): %s", req_id, e)
+                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
     async def Health(
         self,

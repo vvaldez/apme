@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from typing import cast
 
+from apme.v1.common_pb2 import ProgressUpdate
 from apme.v1.primary_pb2 import ScanDiagnostics
 from apme_engine.cli._models import ViolationDict, YAMLDict
 from apme_engine.cli.ansi import (
@@ -26,6 +28,25 @@ from apme_engine.cli.ansi import (
     table,
     yellow,
 )
+
+
+def render_logs(logs: Iterable[ProgressUpdate], verbosity: int) -> None:
+    """Render ProgressUpdate log entries to stderr based on verbosity level.
+
+    Verbosity mapping:
+        0 (no flag)  -> show WARNING and above (level >= 3)
+        1 (-v)       -> show INFO and above (level >= 2)
+        2+ (-vv)     -> show everything including DEBUG (level >= 1)
+
+    Args:
+        logs: Iterable of ProgressUpdate protos with ``level``, ``phase``, ``message``.
+        verbosity: CLI verbosity count (0, 1, 2+).
+    """
+    min_level = {0: 3, 1: 2}.get(verbosity, 1)
+    for log in logs:
+        if log.level >= min_level:
+            prefix = dim(f"[{log.phase}]") if log.phase else ""
+            sys.stderr.write(f"  {prefix} {log.message}\n")
 
 
 def sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:

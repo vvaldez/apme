@@ -118,9 +118,12 @@ def run_fix(args: argparse.Namespace) -> None:
 
             elif oneof == "progress":
                 p = event.progress
-                if p.level <= 1 and getattr(args, "verbose", 0) < 1:
+                verbosity = getattr(args, "verbose", 0) or 0
+                min_level = {0: 2, 1: 2}.get(verbosity, 1)
+                if p.level < min_level:
                     continue
-                sys.stderr.write(f"  {p.message}\n")
+                phase = f"[{p.phase}] " if p.phase else ""
+                sys.stderr.write(f"  {phase}{p.message}\n")
 
             elif oneof == "tier1_complete":
                 summary = event.tier1_complete

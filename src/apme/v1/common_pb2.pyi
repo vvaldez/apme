@@ -66,3 +66,17 @@ class ValidatorDiagnostics:
     rule_timings: list[RuleTiming]
     metadata: dict[str, str]
     def __init__(self, **kwargs: object) -> None: ...
+
+# Log level enum constants (ADR-033)
+LOG_LEVEL_UNSPECIFIED: int
+DEBUG: int
+INFO: int
+WARNING: int
+ERROR: int
+
+class ProgressUpdate:
+    message: str
+    phase: str
+    progress: float
+    level: int
+    def __init__(self, **kwargs: object) -> None: ...

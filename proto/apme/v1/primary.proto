@@ -71,6 +71,7 @@ message ScanResponse {
   ScanDiagnostics diagnostics = 4;
   ScanSummary summary = 5;
   string session_id = 6;             // echoed back for client reuse
+  repeated ProgressUpdate logs = 7;  // collected pipeline logs (ADR-033)
 }
 
 message ScanDiagnostics {
@@ -91,6 +92,7 @@ message FormatRequest {
 
 message FormatResponse {
   repeated FileDiff diffs = 1;
+  repeated ProgressUpdate logs = 2;  // collected pipeline logs (ADR-033)
 }
 
 message FileDiff {
@@ -165,20 +167,7 @@ message SessionCreated {
   int32 ttl_seconds = 2;
 }
 
-enum LogLevel {
-  LOG_LEVEL_UNSPECIFIED = 0;
-  DEBUG = 1;
-  INFO = 2;
-  WARNING = 3;
-  ERROR = 4;
-}
-
-message ProgressUpdate {
-  string message = 1;
-  string phase = 2;       // "format", "tier1", "tier2", "tier3"
-  float progress = 3;     // 0.0-1.0, optional
-  LogLevel level = 4;
-}
+// LogLevel and ProgressUpdate are defined in common.proto (ADR-033).
 
 message Tier1Summary {
   repeated FilePatch applied_patches = 1;

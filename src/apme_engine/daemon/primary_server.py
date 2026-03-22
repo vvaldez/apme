@@ -7,11 +7,12 @@ The Primary delegates internally to validators and remediation.
 
 import asyncio
 import contextlib
+import contextvars
 import difflib
 import json
+import logging
 import os
 import shutil
-import sys
 import tempfile
 import time
 import uuid
@@ -24,7 +25,15 @@ import grpc.aio
 import jsonpickle
 
 from apme.v1 import primary_pb2_grpc, validate_pb2_grpc
-from apme.v1.common_pb2 import File, HealthRequest, HealthResponse, ScanSummary, ServiceHealth, ValidatorDiagnostics
+from apme.v1.common_pb2 import (
+    File,
+    HealthRequest,
+    HealthResponse,
+    ProgressUpdate,
+    ScanSummary,
+    ServiceHealth,
+    ValidatorDiagnostics,
+)
 from apme.v1.primary_pb2 import (
     ApprovalAck,
     FileDiff,
@@ -33,7 +42,6 @@ from apme.v1.primary_pb2 import (
     FixReport,
     FormatRequest,
     FormatResponse,
-    ProgressUpdate,
     Proposal,
     ProposalsReady,
     ScanChunk,
@@ -53,8 +61,11 @@ from apme_engine.daemon.session import ResourceExhaustedError, SessionState, Ses
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.jsonpickle_handlers import register_engine_handlers
 from apme_engine.engine.models import AnsibleRunContext, ViolationDict
+from apme_engine.log_bridge import attach_collector, merge_logs
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import VenvSessionManager
+
+logger = logging.getLogger("apme.primary")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_PRIMARY_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
@@ -67,10 +78,12 @@ class _ValidatorResult:
     Attributes:
         violations: List of violation dicts from the validator.
         diagnostics: Optional ValidatorDiagnostics from the response.
+        logs: ProgressUpdate entries collected by the validator (ADR-033).
     """
 
     violations: list[ViolationDict] = field(default_factory=list)
     diagnostics: ValidatorDiagnostics | None = None
+    logs: list[ProgressUpdate] = field(default_factory=list)
 
 
 def _sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
@@ -134,11 +147,11 @@ def _normalize_scandata_contexts(scandata: object) -> None:
     materialized = list(raw) if not isinstance(raw, list) else raw
     valid = [c for c in materialized if isinstance(c, AnsibleRunContext)]
     if len(valid) != len(materialized):
-        sys.stderr.write(
-            f"Primary: normalized scandata.contexts {len(materialized)} -> {len(valid)} "
-            f"(dropped non-AnsibleRunContext)\n"
+        logger.debug(
+            "Primary: normalized scandata.contexts %d -> %d (dropped non-AnsibleRunContext)",
+            len(materialized),
+            len(valid),
         )
-        sys.stderr.flush()
     scandata.contexts = valid
 
 
@@ -199,10 +212,10 @@ async def _call_validator(
         return _ValidatorResult(
             violations=[violation_proto_to_dict(v) for v in resp.violations],
             diagnostics=resp.diagnostics if resp.HasField("diagnostics") else None,
+            logs=list(resp.logs),
         )
     except grpc.RpcError as e:
-        sys.stderr.write(f"[req={req_id}] Validator at {address} failed: {e}\n")
-        sys.stderr.flush()
+        logger.error("Validator at %s failed (req=%s): %s", address, req_id, e)
         return _ValidatorResult()
     finally:
         await channel.close(grace=None)
@@ -333,7 +346,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         collection_specs: list[str] | None = None,
         include_scandata: bool = True,
         session_id: str = "",
-    ) -> tuple[list[ViolationDict], ScanDiagnostics | None, str]:
+    ) -> tuple[list[ViolationDict], ScanDiagnostics | None, str, list[list[ProgressUpdate]]]:
         """Core scan pipeline: engine → collection discovery → venv → validators.
 
         Reused by Scan, ScanStream, and FixSession (as scan_fn for remediation).
@@ -360,7 +373,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             session_id: Client-provided session ID for venv reuse.
 
         Returns:
-            Tuple of (violations, ScanDiagnostics or None, resolved session_id).
+            Tuple of (violations, ScanDiagnostics or None, resolved session_id,
+            merged pipeline logs).
         """
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
         from apme_engine.venv_manager.session import _venv_site_packages
@@ -378,14 +392,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             with contextlib.suppress(FileNotFoundError):
                 ari_dependency_dir = str(_venv_site_packages(warm.venv_root))
             if ari_dependency_dir:
-                sys.stderr.write(
-                    f"[req={scan_id}] Session({sid}): warm venv, ARI dependency_dir={ari_dependency_dir}\n"
-                )
-                sys.stderr.flush()
+                logger.debug("Session(%s): warm venv, ARI dependency_dir=%s", sid, ari_dependency_dir)
 
         # 1. ARI tree build
+        ctx = contextvars.copy_context()
         context_obj = await asyncio.get_event_loop().run_in_executor(
             None,
+            ctx.run,
             lambda: run_scan(
                 str(temp_dir),
                 str(temp_dir),
@@ -395,9 +408,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
 
         if not context_obj.hierarchy_payload:
-            sys.stderr.write(f"[req={scan_id}] Scan: no hierarchy payload produced\n")
-            sys.stderr.flush()
-            return [], None, sid
+            logger.warning("Scan: no hierarchy payload produced (req=%s)", scan_id)
+            return [], ScanDiagnostics(), sid, []
 
         # 2. Collection discovery
         discovered = _discover_collection_specs(files)
@@ -417,17 +429,19 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         # 3. Venv acquire (always — creates or incrementally installs)
         venv_session = await asyncio.get_event_loop().run_in_executor(
             None,
+            ctx.run,
             self._get_venv_manager().acquire,
             sid,
             core_version,
             collection_specs,
         )
         venv_path = str(venv_session.venv_root)
-        sys.stderr.write(
-            f"[req={scan_id}] Session({sid}): venv ready at {venv_path} "
-            f"({len(venv_session.installed_collections)} collections)\n"
+        logger.info(
+            "Venv: ready (%d collections, session=%s, req=%s)",
+            len(venv_session.installed_collections),
+            sid,
+            scan_id,
         )
-        sys.stderr.flush()
 
         # 4. Validator fan-out
         validate_request = ValidateRequest(
@@ -451,9 +465,11 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
+        validator_logs: list[list[ProgressUpdate]] = []
         fan_out_ms = 0.0
 
         if tasks:
+            logger.info("Fan-out: dispatching to %d validators (req=%s)", len(tasks), scan_id)
             fan_t0 = time.monotonic()
             results = await asyncio.gather(*tasks.values(), return_exceptions=True)
             fan_out_ms = (time.monotonic() - fan_t0) * 1000
@@ -461,18 +477,18 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             counts: dict[str, int] = {}
             for name, result in zip(tasks.keys(), results, strict=False):
                 if isinstance(result, BaseException):
-                    sys.stderr.write(f"[req={scan_id}] {name} raised: {result}\n")
-                    sys.stderr.flush()
+                    logger.error("%s raised (req=%s): %s", name, scan_id, result)
                     counts[name] = 0
                 else:
                     counts[name] = len(result.violations)
                     violations.extend(result.violations)
                     if result.diagnostics:
                         validator_diagnostics.append(result.diagnostics)
+                    if result.logs:
+                        validator_logs.append(list(result.logs))
 
             parts = " ".join(f"{n.title()}={counts.get(n, 0)}" for n in VALIDATOR_ENV_VARS)
-            sys.stderr.write(f"[req={scan_id}] Scan: {parts} Total={len(violations)}\n")
-            sys.stderr.flush()
+            logger.info("Fan-out: done (%.0fms) %s Total=%d (req=%s)", fan_out_ms, parts, len(violations), scan_id)
 
         violations = _deduplicate_violations(_sort_violations(violations))
 
@@ -489,7 +505,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             fan_out_ms=fan_out_ms,
             total_ms=total_ms,
         )
-        return violations, diag, sid
+        logger.info("Scan: pipeline done (%.0fms, %d violations, req=%s)", total_ms, len(violations), scan_id)
+        return violations, diag, sid, validator_logs
 
     @staticmethod
     def _format_files(files: list[File]) -> list[FileDiff]:
@@ -572,70 +589,68 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         scan_id = request.scan_id or str(uuid.uuid4())
         temp_dir: Path | None = None
 
-        try:
-            sys.stderr.write(f"[req={scan_id}] Scan: received {len(request.files)} file(s)\n")
-            sys.stderr.flush()
-
-            if not request.files:
-                return ScanResponse(scan_id=scan_id, violations=[])
-
+        with attach_collector() as sink:
             try:
-                temp_dir = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    _write_chunked_fs,  # type: ignore[arg-type]
-                    list(request.files),
+                logger.info("Scan: start (%d files, req=%s)", len(request.files), scan_id)
+
+                if not request.files:
+                    return ScanResponse(scan_id=scan_id, violations=[], logs=sink.entries)
+
+                try:
+                    temp_dir = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        _write_chunked_fs,  # type: ignore[arg-type]
+                        list(request.files),
+                    )
+                except ValueError as ve:
+                    await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
+                assert temp_dir is not None
+
+                opts = request.options if request.HasField("options") else None
+                session_id = request.session_id or (opts.session_id if opts else "") or ""
+                violations, diag, resolved_sid, vlogs = await self._scan_pipeline(
+                    temp_dir,
+                    list(request.files),  # type: ignore[arg-type]
+                    scan_id,
+                    ansible_core_version=opts.ansible_core_version if opts else "",
+                    collection_specs=list(opts.collection_specs) if opts else [],
+                    session_id=session_id,
                 )
-            except ValueError as ve:
-                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
-            assert temp_dir is not None
 
-            opts = request.options if request.HasField("options") else None
-            session_id = request.session_id or (opts.session_id if opts else "") or ""
-            violations, diag, resolved_sid = await self._scan_pipeline(
-                temp_dir,
-                list(request.files),  # type: ignore[arg-type]
-                scan_id,
-                ansible_core_version=opts.ansible_core_version if opts else "",
-                collection_specs=list(opts.collection_specs) if opts else [],
-                session_id=session_id,
-            )
+                from apme_engine.remediation.partition import add_classification_to_violations
+                from apme_engine.remediation.transforms import build_default_registry
 
-            from apme_engine.remediation.partition import add_classification_to_violations
-            from apme_engine.remediation.transforms import build_default_registry
+                registry = build_default_registry()
+                add_classification_to_violations(violations, registry)
 
-            registry = build_default_registry()
-            add_classification_to_violations(violations, registry)
+                from apme_engine.remediation.partition import count_by_remediation_class, count_by_resolution
 
-            from apme_engine.remediation.partition import count_by_remediation_class, count_by_resolution
+                rem_counts = count_by_remediation_class(violations)
+                res_counts = count_by_resolution(violations)
+                summary = ScanSummary(
+                    total=len(violations),
+                    auto_fixable=rem_counts.get("auto-fixable", 0),
+                    ai_candidate=rem_counts.get("ai-candidate", 0),
+                    manual_review=rem_counts.get("manual-review", 0),
+                    by_resolution=res_counts,
+                )
 
-            rem_counts = count_by_remediation_class(violations)
-            res_counts = count_by_resolution(violations)
-            summary = ScanSummary(
-                total=len(violations),
-                auto_fixable=rem_counts.get("auto-fixable", 0),
-                ai_candidate=rem_counts.get("ai-candidate", 0),
-                manual_review=rem_counts.get("manual-review", 0),
-                by_resolution=res_counts,
-            )
-
-            return ScanResponse(
-                violations=[violation_dict_to_proto(v) for v in violations],
-                scan_id=scan_id,
-                diagnostics=diag,
-                summary=summary,
-                session_id=resolved_sid,
-            )
-        except Exception as e:
-            import traceback
-
-            sys.stderr.write(f"[req={scan_id}] Scan failed: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
-            raise
-        finally:
-            if temp_dir is not None and temp_dir.is_dir():
-                with contextlib.suppress(OSError):
-                    shutil.rmtree(temp_dir)
+                all_logs = merge_logs(sink.entries, vlogs)
+                return ScanResponse(
+                    violations=[violation_dict_to_proto(v) for v in violations],
+                    scan_id=scan_id,
+                    diagnostics=diag,
+                    summary=summary,
+                    session_id=resolved_sid,
+                    logs=all_logs,
+                )
+            except Exception as e:
+                logger.exception("Scan failed (req=%s): %s", scan_id, e)
+                raise
+            finally:
+                if temp_dir is not None and temp_dir.is_dir():
+                    with contextlib.suppress(OSError):
+                        shutil.rmtree(temp_dir)
 
     async def ScanStream(
         self,
@@ -674,17 +689,17 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         Returns:
             FormatResponse with file diffs.
         """
-        sys.stderr.write(f"Format: received {len(request.files)} file(s)\n")
-        sys.stderr.flush()
-
-        diffs = await asyncio.get_event_loop().run_in_executor(
-            None,
-            self._format_files,  # type: ignore[arg-type]
-            list(request.files),
-        )
-        sys.stderr.write(f"Format: {len(diffs)} file(s) changed\n")
-        sys.stderr.flush()
-        return FormatResponse(diffs=diffs)
+        with attach_collector() as sink:
+            logger.info("Format: start (%d files)", len(request.files))
+            t0 = time.monotonic()
+            diffs = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self._format_files,  # type: ignore[arg-type]
+                list(request.files),
+            )
+            dur = (time.monotonic() - t0) * 1000
+            logger.info("Format: done (%.0fms, %d files changed)", dur, len(diffs))
+            return FormatResponse(diffs=diffs, logs=sink.entries)
 
     async def FormatStream(
         self,
@@ -701,17 +716,17 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             FormatResponse with file diffs.
         """
         all_files, scan_id, *_ = await self._accumulate_chunks(request_stream)
-        sys.stderr.write(f"[req={scan_id}] FormatStream: received {len(all_files)} file(s)\n")
-        sys.stderr.flush()
-
-        diffs = await asyncio.get_event_loop().run_in_executor(
-            None,
-            self._format_files,
-            all_files,
-        )
-        sys.stderr.write(f"[req={scan_id}] FormatStream: {len(diffs)} file(s) changed\n")
-        sys.stderr.flush()
-        return FormatResponse(diffs=diffs)
+        with attach_collector() as sink:
+            logger.info("FormatStream: start (%d files, req=%s)", len(all_files), scan_id)
+            t0 = time.monotonic()
+            diffs = await asyncio.get_event_loop().run_in_executor(
+                None,
+                self._format_files,
+                all_files,
+            )
+            dur = (time.monotonic() - t0) * 1000
+            logger.info("FormatStream: done (%.0fms, %d files changed, req=%s)", dur, len(diffs), scan_id)
+            return FormatResponse(diffs=diffs, logs=sink.entries)
 
     # ── FixSession RPC (bidirectional stream, ADR-028) ─────────────────
 
@@ -831,11 +846,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         except ValueError as ve:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
         except Exception as e:
-            import traceback
-
-            sys.stderr.write(f"[session={scan_id}] FixSession failed: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
+            logger.exception("FixSession failed (session=%s): %s", scan_id, e)
             raise
 
     # ── FixSession helpers ─────────────────────────────────────────────
@@ -897,10 +908,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             collection_specs = list(scan_opts.collection_specs)
             fix_session_id = scan_opts.session_id
 
-        sys.stderr.write(
-            f"[session={scan_id}] FixSession: processing {len(all_files)} file(s)\n",
-        )
-        sys.stderr.flush()
+        logger.info("FixSession: processing %d file(s) (session=%s)", len(all_files), scan_id)
 
         if not all_files:
             session.status = 3  # COMPLETE
@@ -999,7 +1007,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 session_id=fix_session_id,
             )
             future = asyncio.run_coroutine_threadsafe(coro, loop)
-            violations, _, _ = future.result(timeout=300)
+            violations, _, _, _ = future.result(timeout=300)
             return violations
 
         registry = build_default_registry()

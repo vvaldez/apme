@@ -1,5 +1,7 @@
 """Stub for generated validate_pb2 (proto types)."""
 
+from apme.v1.common_pb2 import ProgressUpdate
+
 class ValidateRequest:
     request_id: str
     project_root: str
@@ -20,4 +22,5 @@ class ValidateRequest:
     def HasField(self, field_name: str) -> bool: ...
 
 class ValidateResponse:
+    logs: list[ProgressUpdate]
     def __init__(self, **kwargs: object) -> None: ...

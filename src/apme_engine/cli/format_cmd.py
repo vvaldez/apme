@@ -11,6 +11,7 @@ import grpc
 from apme.v1 import primary_pb2_grpc
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
 from apme_engine.cli.discovery import resolve_primary
+from apme_engine.cli.output import render_logs
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 
 
@@ -47,6 +48,9 @@ def run_format(args: argparse.Namespace) -> None:
         sys.exit(1)
     finally:
         channel.close()
+
+    verbosity = getattr(args, "verbose", 0) or 0
+    render_logs(resp.logs, verbosity)
 
     diffs = list(resp.diffs)
 

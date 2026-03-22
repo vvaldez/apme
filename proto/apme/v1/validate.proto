@@ -27,4 +27,5 @@ message ValidateResponse {
   repeated Violation violations = 1;
   string request_id = 2;          // echoed back for correlation
   ValidatorDiagnostics diagnostics = 3;
+  repeated ProgressUpdate logs = 4;  // collected validator logs (ADR-033)
 }

@@ -1,5 +1,6 @@
 """Run the integrated scan engine and return a ScanContext."""
 
+import logging
 import os
 import tempfile
 import time
@@ -7,6 +8,8 @@ from pathlib import Path
 
 from apme_engine.engine.scanner import ARIScanner
 from apme_engine.validators.base import EngineDiagnostics, ScanContext
+
+logger = logging.getLogger("apme.engine")
 
 
 def run_scan_playbook_yaml(
@@ -79,6 +82,7 @@ def run_scan(
         base_dir = str(path)
         scan_type = "project"
 
+    logger.info("Engine: ARI evaluate start (%s, type=%s)", Path(name).name, scan_type)
     t0 = time.monotonic()
     scanner.evaluate(
         type=scan_type,
@@ -91,6 +95,7 @@ def run_scan(
         include_test_contents=True,
     )
     engine_total_ms = (time.monotonic() - t0) * 1000
+    logger.info("Engine: ARI evaluate done (%.0fms)", engine_total_ms)
 
     scandata = scanner._current
     diag = _extract_engine_diagnostics(scandata, engine_total_ms)

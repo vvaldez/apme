@@ -18,6 +18,7 @@ from apme_engine.cli.output import (
     diag_to_dict,
     print_diagnostics_v,
     print_diagnostics_vv,
+    render_logs,
     render_scan_results,
     sort_violations,
 )
@@ -86,6 +87,8 @@ def run_scan(args: argparse.Namespace) -> None:
 
     violations: list[ViolationDict] = [violation_proto_to_dict(v) for v in resp.violations]
     violations = deduplicate_violations(sort_violations(violations))
+
+    render_logs(resp.logs, verbosity)
 
     has_diag = resp.HasField("diagnostics")
 

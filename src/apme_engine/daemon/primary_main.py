@@ -25,6 +25,10 @@ def main() -> None:
 
     Uses APME_PRIMARY_LISTEN for bind address. Exits with code 1 on failure.
     """
+    from apme_engine.log_bridge import install_handler
+
+    install_handler()
+
     listen = os.environ.get("APME_PRIMARY_LISTEN", "0.0.0.0:50051")
     try:
         asyncio.run(_run(listen))

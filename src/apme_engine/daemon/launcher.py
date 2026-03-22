@@ -127,6 +127,10 @@ async def _run_daemon(services: dict[str, str]) -> None:
     Args:
         services: Map of service name -> listen address.
     """
+    from apme_engine.log_bridge import install_handler
+
+    install_handler()
+
     from apme_engine.daemon.primary_server import serve as primary_serve
 
     servers = []

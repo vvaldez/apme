@@ -61,6 +61,72 @@ def scan_data(infrastructure: object) -> YAMLDict:
     return _scan_json(FIXTURE_DIR)
 
 
+def _scan_verbose(fixture_dir: Path) -> subprocess.CompletedProcess[str]:
+    """Scan the fixture directory with -v (human-readable, not JSON).
+
+    Args:
+        fixture_dir: Path to the Ansible project to scan.
+
+    Returns:
+        CompletedProcess with stdout (table output) and stderr (milestone logs).
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "apme_engine.cli", "scan", "-v", "--timeout", "300", str(fixture_dir)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
+def scan_verbose(infrastructure: object) -> subprocess.CompletedProcess[str]:
+    """Scan terrible-playbook with -v and cache for all tests in this module.
+
+    Args:
+        infrastructure: Daemon infrastructure fixture (ensures daemon is up).
+
+    Returns:
+        CompletedProcess with stdout and stderr.
+    """
+    return _scan_verbose(FIXTURE_DIR)
+
+
+@pytest.mark.integration  # type: ignore[untyped-decorator]
+def test_milestone_logs_displayed(scan_verbose: subprocess.CompletedProcess[str]) -> None:
+    """With -v the CLI renders pipeline milestone logs on stderr (ADR-033).
+
+    The log bridge collects ProgressUpdate entries from Primary and validators
+    and returns them in ScanResponse.logs.  The CLI's render_logs() writes them
+    to stderr with ``[phase] message`` formatting.  This test verifies that
+    key milestones are visible to the user.
+
+    Args:
+        scan_verbose: Completed scan process with -v output.
+    """
+    assert scan_verbose.returncode == 0, (
+        f"Scan exited {scan_verbose.returncode}:\n"
+        f"stdout: {scan_verbose.stdout[:2000]}\n"
+        f"stderr: {scan_verbose.stderr[:2000]}"
+    )
+
+    stderr = scan_verbose.stderr
+
+    assert "[primary]" in stderr, f"Expected [primary] phase in stderr:\n{stderr[:2000]}"
+    assert "Scan: start" in stderr, f"Expected 'Scan: start' milestone in stderr:\n{stderr[:2000]}"
+    assert "Scan: pipeline done" in stderr, f"Expected 'Scan: pipeline done' milestone in stderr:\n{stderr[:2000]}"
+    assert "Fan-out:" in stderr, f"Expected 'Fan-out:' milestone in stderr:\n{stderr[:2000]}"
+    assert "Venv: ready" in stderr, f"Expected 'Venv: ready' milestone in stderr:\n{stderr[:2000]}"
+
+    assert "[native]" in stderr, f"Expected [native] phase in stderr:\n{stderr[:2000]}"
+    assert "Native: validate" in stderr, f"Expected Native validate milestone in stderr:\n{stderr[:2000]}"
+
+    # stdout should have the human-readable scan results table, not JSON
+    assert "Scan Results" in scan_verbose.stdout, (
+        f"Expected 'Scan Results' in stdout (human-readable mode):\n{scan_verbose.stdout[:2000]}"
+    )
+    assert scan_verbose.stdout.strip()[0] != "{", "stdout should not be JSON in non-JSON mode"
+
+
 @pytest.mark.integration  # type: ignore[untyped-decorator]
 def test_posix_argspec_violation(scan_data: YAMLDict) -> None:
     """L058/L059 fires for ansible.posix.sysctl with bogus_param (ADR-032 proof).

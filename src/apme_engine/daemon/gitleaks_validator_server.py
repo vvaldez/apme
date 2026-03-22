@@ -5,9 +5,9 @@ Writes files to a temp dir, runs gitleaks detect, and returns violations.
 
 import asyncio
 import contextlib
+import logging
 import os
 import shutil
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -19,7 +19,10 @@ from apme.v1 import common_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
+from apme_engine.log_bridge import attach_collector
 from apme_engine.validators.gitleaks.scanner import GITLEAKS_BIN, run_gitleaks
+
+logger = logging.getLogger("apme.gitleaks")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_GITLEAKS_MAX_RPCS", "16"))
 
@@ -96,54 +99,51 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
         """
         req_id = request.request_id or ""
         t0 = time.monotonic()
-        try:
-            if not request.files:
-                return ValidateResponse(violations=[], request_id=req_id)
+        with attach_collector() as sink:
+            try:
+                if not request.files:
+                    return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
-            sys.stderr.write(f"[req={req_id}] Gitleaks: scanning {len(request.files)} file(s)\n")
-            sys.stderr.flush()
+                logger.info("Gitleaks: validate start (%d files, req=%s)", len(request.files), req_id)
 
-            violations, files_written = await asyncio.get_event_loop().run_in_executor(
-                None,
-                _run_scan,  # type: ignore[arg-type]
-                list(request.files),
-            )
+                violations, files_written = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _run_scan,  # type: ignore[arg-type]
+                    list(request.files),
+                )
 
-            total_ms = (time.monotonic() - t0) * 1000
-            sys.stderr.write(f"[req={req_id}] Gitleaks: {len(violations)} finding(s) in {total_ms:.1f}ms\n")
-            sys.stderr.flush()
+                total_ms = (time.monotonic() - t0) * 1000
+                logger.info("Gitleaks: validate done (%.0fms, %d findings, req=%s)", total_ms, len(violations), req_id)
+                logger.debug("Gitleaks: %d/%d files scanned (req=%s)", files_written, len(request.files), req_id)
 
-            diag = ValidatorDiagnostics(
-                validator_name="gitleaks",
-                request_id=req_id,
-                total_ms=total_ms,
-                files_received=len(request.files),
-                violations_found=len(violations),
-                rule_timings=[
-                    RuleTiming(
-                        rule_id="gitleaks_subprocess",
-                        elapsed_ms=total_ms,
-                        violations=len(violations),
-                    ),
-                ],
-                metadata={
-                    "subprocess_ms": f"{total_ms:.1f}",
-                    "files_written": str(files_written),
-                },
-            )
+                diag = ValidatorDiagnostics(
+                    validator_name="gitleaks",
+                    request_id=req_id,
+                    total_ms=total_ms,
+                    files_received=len(request.files),
+                    violations_found=len(violations),
+                    rule_timings=[
+                        RuleTiming(
+                            rule_id="gitleaks_subprocess",
+                            elapsed_ms=total_ms,
+                            violations=len(violations),
+                        ),
+                    ],
+                    metadata={
+                        "subprocess_ms": f"{total_ms:.1f}",
+                        "files_written": str(files_written),
+                    },
+                )
 
-            return ValidateResponse(
-                violations=[violation_dict_to_proto(v) for v in violations],
-                request_id=req_id,
-                diagnostics=diag,
-            )
-        except Exception as e:
-            import traceback
-
-            sys.stderr.write(f"[req={req_id}] Gitleaks error: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
-            return ValidateResponse(violations=[], request_id=req_id)
+                return ValidateResponse(
+                    violations=[violation_dict_to_proto(v) for v in violations],
+                    request_id=req_id,
+                    diagnostics=diag,
+                    logs=sink.entries,
+                )
+            except Exception as e:
+                logger.exception("Gitleaks: unhandled error (req=%s): %s", req_id, e)
+                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
     async def Health(
         self,

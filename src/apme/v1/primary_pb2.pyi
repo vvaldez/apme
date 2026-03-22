@@ -2,7 +2,7 @@
 
 from google.protobuf.struct_pb2 import Struct
 
-from apme.v1.common_pb2 import ValidatorDiagnostics, Violation
+from apme.v1.common_pb2 import ProgressUpdate, ValidatorDiagnostics, Violation
 
 class ScanOptions:
     include_scandata: bool
@@ -44,6 +44,7 @@ class ScanRequest:
 class ScanResponse:
     summary: object | None
     session_id: str
+    logs: list[ProgressUpdate]
     def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
@@ -64,6 +65,7 @@ class FormatRequest:
     def __init__(self, **kwargs: object) -> None: ...
 
 class FormatResponse:
+    logs: list[ProgressUpdate]
     def __init__(self, **kwargs: object) -> None: ...
 
 class FileDiff:
@@ -137,12 +139,8 @@ class SessionCreated:
     ttl_seconds: int
     def __init__(self, **kwargs: object) -> None: ...
 
-class ProgressUpdate:
-    message: str
-    phase: str
-    progress: float
-    level: int
-    def __init__(self, **kwargs: object) -> None: ...
+# ProgressUpdate is defined in common_pb2 (ADR-033) and re-exported here
+# for backward compatibility. Import from common_pb2 for new code.
 
 class Tier1Summary:
     applied_patches: list[FilePatch]
@@ -195,12 +193,8 @@ class DataPayload:
     data: Struct
     def __init__(self, **kwargs: object) -> None: ...
 
-# Enum constants
-LOG_LEVEL_UNSPECIFIED: int
-DEBUG: int
-INFO: int
-WARNING: int
-ERROR: int
+# LogLevel enum constants moved to common_pb2 (ADR-033).
+# Re-exported here for backward compatibility.
 
 SESSION_STATUS_UNSPECIFIED: int
 AWAITING_APPROVAL: int

@@ -20,6 +20,10 @@ def main() -> None:
 
     Uses APME_GITLEAKS_VALIDATOR_LISTEN for bind address. Exits with code 1 on failure.
     """
+    from apme_engine.log_bridge import install_handler
+
+    install_handler()
+
     listen = os.environ.get("APME_GITLEAKS_VALIDATOR_LISTEN", "0.0.0.0:50056")
     try:
         asyncio.run(_run(listen))

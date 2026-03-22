@@ -8,9 +8,9 @@ reaping).  This validator receives a ready-to-use ``venv_path`` in every
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import shutil
-import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -24,9 +24,12 @@ from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagno
 from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict, YAMLDict
+from apme_engine.log_bridge import attach_collector
 from apme_engine.validators.ansible import AnsibleRunResult, AnsibleValidator
 from apme_engine.validators.ansible._venv import DEFAULT_VERSION
 from apme_engine.validators.base import ScanContext
+
+logger = logging.getLogger("apme.ansible")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ANSIBLE_MAX_RPCS", "8"))
 
@@ -87,8 +90,7 @@ def _run_ansible_validate(
         temp_dir = _write_chunked_fs(files)
 
         if venv_root is None:
-            sys.stderr.write(f"[req={req_id}] Ansible: no venv_path provided, skipping\n")
-            sys.stderr.flush()
+            logger.warning("Ansible: no venv_path provided, skipping (req=%s)", req_id)
             err_viol: ViolationDict = {
                 "rule_id": "INFRA-001",
                 "level": "error",
@@ -102,8 +104,7 @@ def _run_ansible_validate(
                 ansible_core_version=raw_version,
             )
 
-        sys.stderr.write(f"[req={req_id}] Ansible: using session venv {venv_path}\n")
-        sys.stderr.flush()
+        logger.debug("Ansible: using session venv %s (req=%s)", venv_path, req_id)
 
         scan_context = ScanContext(
             hierarchy_payload=hierarchy_payload,
@@ -116,11 +117,7 @@ def _run_ansible_validate(
             ansible_core_version=raw_version,
         )
     except Exception as e:
-        import traceback
-
-        sys.stderr.write(f"[req={req_id}] Ansible error: {e}\n")
-        traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
+        logger.exception("Ansible: error in blocking executor (req=%s): %s", req_id, e)
         err_viol_exc: ViolationDict = {
             "rule_id": "INFRA-002",
             "level": "error",
@@ -154,73 +151,74 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
         """
         req_id = request.request_id or ""
         t0 = time.monotonic()
-        try:
-            if not request.files:
-                return ValidateResponse(violations=[], request_id=req_id)
+        with attach_collector() as sink:
+            try:
+                if not request.files:
+                    return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
-            raw_version = (request.ansible_core_version or "").strip() or DEFAULT_VERSION
+                raw_version = (request.ansible_core_version or "").strip() or DEFAULT_VERSION
 
-            hierarchy_payload: YAMLDict = {}
-            if request.hierarchy_payload:
-                try:
-                    hierarchy_payload = cast(YAMLDict, json.loads(request.hierarchy_payload))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    sys.stderr.write(f"[req={req_id}] Ansible: failed to parse hierarchy_payload\n")
+                hierarchy_payload: YAMLDict = {}
+                if request.hierarchy_payload:
+                    try:
+                        hierarchy_payload = cast(YAMLDict, json.loads(request.hierarchy_payload))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        logger.warning("Ansible: failed to parse hierarchy_payload (req=%s)", req_id)
 
-            sys.stderr.write(
-                f"[req={req_id}] Ansible: {len(request.files)} files, "
-                f"core={raw_version}, venv={request.venv_path or '(none)'}\n"
-            )
-            sys.stderr.flush()
-
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                _run_ansible_validate,  # type: ignore[arg-type]
-                list(request.files),
-                raw_version,
-                hierarchy_payload,
-                req_id,
-                request.venv_path or "",
-            )
-
-            total_ms = (time.monotonic() - t0) * 1000
-            sys.stderr.write(
-                f"[req={req_id}] Ansible: {len(result.run_result.violations)} violation(s) in {total_ms:.1f}ms\n"
-            )
-            sys.stderr.flush()
-
-            rule_timings = [
-                RuleTiming(
-                    rule_id=rt.rule_id,
-                    elapsed_ms=rt.elapsed_ms,
-                    violations=rt.violations,
+                logger.info(
+                    "Ansible: validate start (%d files, core=%s, req=%s)",
+                    len(request.files),
+                    raw_version,
+                    req_id,
                 )
-                for rt in result.run_result.rule_timings
-            ]
-            diag = ValidatorDiagnostics(
-                validator_name="ansible",
-                request_id=req_id,
-                total_ms=total_ms,
-                files_received=len(request.files),
-                violations_found=len(result.run_result.violations),
-                rule_timings=rule_timings,
-                metadata={
-                    "ansible_core_version": result.ansible_core_version,
-                },
-            )
 
-            return validate_pb2.ValidateResponse(
-                violations=[violation_dict_to_proto(cast(ViolationDict, v)) for v in result.run_result.violations],
-                request_id=req_id,
-                diagnostics=diag,
-            )
-        except Exception as e:
-            import traceback
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _run_ansible_validate,  # type: ignore[arg-type]
+                    list(request.files),
+                    raw_version,
+                    hierarchy_payload,
+                    req_id,
+                    request.venv_path or "",
+                )
 
-            sys.stderr.write(f"[req={req_id}] Ansible error: {e}\n")
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
-            return ValidateResponse(violations=[], request_id=req_id)
+                total_ms = (time.monotonic() - t0) * 1000
+                logger.info(
+                    "Ansible: validate done (%.0fms, %d violations, req=%s)",
+                    total_ms,
+                    len(result.run_result.violations),
+                    req_id,
+                )
+
+                rule_timings = [
+                    RuleTiming(
+                        rule_id=rt.rule_id,
+                        elapsed_ms=rt.elapsed_ms,
+                        violations=rt.violations,
+                    )
+                    for rt in result.run_result.rule_timings
+                ]
+                diag = ValidatorDiagnostics(
+                    validator_name="ansible",
+                    request_id=req_id,
+                    total_ms=total_ms,
+                    files_received=len(request.files),
+                    violations_found=len(result.run_result.violations),
+                    rule_timings=rule_timings,
+                    metadata={
+                        "ansible_core_version": result.ansible_core_version,
+                    },
+                )
+
+                return validate_pb2.ValidateResponse(
+                    violations=[violation_dict_to_proto(cast(ViolationDict, v)) for v in result.run_result.violations],
+                    request_id=req_id,
+                    diagnostics=diag,
+                    logs=sink.entries,
+                )
+            except Exception as e:
+                logger.exception("Ansible: unhandled error (req=%s): %s", req_id, e)
+                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
     async def Health(
         self,
