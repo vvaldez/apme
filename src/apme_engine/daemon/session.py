@@ -82,6 +82,9 @@ class SessionState:
     remaining_ai: list[object] = field(default_factory=list)
     remaining_manual: list[object] = field(default_factory=list)
 
+    # Proposal IDs approved by the user (for FixCompletedEvent)
+    approved_ids: set[str] = field(default_factory=set)
+
     @property
     def ttl_seconds(self) -> int:
         """Remaining idle TTL in seconds."""
