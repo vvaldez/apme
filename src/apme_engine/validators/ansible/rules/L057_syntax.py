@@ -24,9 +24,9 @@ def _is_task_file(path: Path) -> bool:
         path: File path to check.
 
     Returns:
-        True if any path component matches a known task directory.
+        True if the file's immediate parent directory matches a known task directory.
     """
-    return any(part in _TASK_DIRS for part in path.parts)
+    return path.parent.name in _TASK_DIRS
 
 
 def _is_play_structure_error(stderr: str) -> bool:
