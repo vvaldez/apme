@@ -579,11 +579,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             if not request.files:
                 return ScanResponse(scan_id=scan_id, violations=[])
 
-            temp_dir = await asyncio.get_event_loop().run_in_executor(
-                None,
-                _write_chunked_fs,  # type: ignore[arg-type]
-                list(request.files),
-            )
+            try:
+                temp_dir = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _write_chunked_fs,  # type: ignore[arg-type]
+                    list(request.files),
+                )
+            except ValueError as ve:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
             assert temp_dir is not None
 
             opts = request.options if request.HasField("options") else None
@@ -825,6 +828,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         except ResourceExhaustedError as e:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(e))
+        except ValueError as ve:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
         except Exception as e:
             import traceback
 
