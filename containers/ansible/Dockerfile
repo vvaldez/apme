@@ -15,7 +15,7 @@ RUN chmod +x containers/ansible/prebuild-venvs.sh \
     && containers/ansible/prebuild-venvs.sh
 
 ENV APME_ANSIBLE_VALIDATOR_LISTEN=0.0.0.0:50053
-ENV APME_SESSIONS_ROOT=/sessions
+ENV APME_COLLECTION_CACHE=/sessions
 EXPOSE 50053
 
 CMD ["apme-ansible-validator"]
