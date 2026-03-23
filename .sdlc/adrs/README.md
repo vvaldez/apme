@@ -38,10 +38,15 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-030](ADR-030-frontend-deployment-model.md) | Frontend Deployment Model | Proposed | 2026-03 |
 | [ADR-031](ADR-031-unified-collection-cache.md) | Unified Collection Cache as Single Authoritative Source | Accepted | 2026-03 |
 | [ADR-032](ADR-032-fqcn-collection-auto-discovery.md) | FQCN-Based Collection Auto-Discovery | Accepted | 2026-03 |
+| [ADR-034](ADR-034-secret-externalization-subcommand.md) | Externalize-Secrets as a Local CLI Subcommand | Accepted | 2026-03 |
 | [ADR-033](ADR-033-centralized-log-bridge.md) | Centralized Log Bridge | Accepted | 2026-03 |
 | [ADR-034](ADR-034-multi-pod-health-registration.md) | Multi-Pod Health Registration | Proposed | 2026-03 |
 
 ## Categories
+
+### Secrets & Security
+- ADR-010: Gitleaks validator
+- ADR-034: Externalize-secrets as a local CLI subcommand
 
 ### Communication & Infrastructure
 - ADR-001: gRPC communication
@@ -152,5 +157,6 @@ Original planning ADRs that were superseded by implementation decisions:
 | 030 | 2026-03 | Frontend deployment model (proposed) |
 | 031 | 2026-03 | Unified collection cache as single authoritative source (accepted) |
 | 032 | 2026-03 | FQCN-based collection auto-discovery |
+| 034 | 2026-03 | Externalize-secrets as a local CLI subcommand |
 | 033 | 2026-03 | Centralized log bridge |
 | 034 | 2026-03 | Multi-pod health registration (proposed) |

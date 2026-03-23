@@ -143,4 +143,31 @@ def build_parser() -> argparse.ArgumentParser:
     health_p.add_argument("--timeout", type=float, default=5.0, help="Timeout per check (default: 5s)")
     health_p.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # ── externalize-secrets ──
+    ext_p = subparsers.add_parser(
+        "externalize-secrets",
+        parents=[global_opts],
+        help="Extract hardcoded secrets into a separate vars file (ADR-034)",
+    )
+    ext_p.add_argument(
+        "target",
+        nargs="?",
+        default=".",
+        help="Path to a YAML playbook file or directory to scan",
+    )
+    ext_p.add_argument(
+        "--secrets-file",
+        default="secrets.yml",
+        dest="secrets_file",
+        metavar="FILE",
+        help="Filename for extracted secrets (default: secrets.yml, relative to each source file)",
+    )
+    ext_p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        dest="dry_run",
+        help="Report what would be extracted without writing any files",
+    )
+
     return parser

@@ -44,6 +44,10 @@ def main() -> None:
         from apme_engine.cli.health import run_health_check
 
         run_health_check(args)
+    elif cmd == "externalize-secrets":
+        from apme_engine.cli.externalize import run_externalize
+
+        run_externalize(args)
     else:
         parser.print_help()
         sys.exit(1)

@@ -18,6 +18,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-002 | Automated Remediation | PHASE-002 | Draft |
 | REQ-003 | Security & Compliance | PHASE-003 | Draft |
 | REQ-004 | Enterprise Integration | PHASE-003 | Draft |
+| REQ-005 | Secret Externalization Subcommand | PHASE-003 | Approved |
 
 ## Directory Structure
 
@@ -49,7 +50,8 @@ PHASE-002: Rewrite Engine
 
 PHASE-003: Enterprise Dashboard
 ├── REQ-003: Security & Compliance
-└── REQ-004: Enterprise Integration
+├── REQ-004: Enterprise Integration
+└── REQ-005: Secret Externalization Subcommand
 ```
 
 See [phases/README.md](../phases/README.md) for phase details.
