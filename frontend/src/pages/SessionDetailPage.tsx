@@ -55,7 +55,9 @@ export function SessionDetailPage() {
                   <tr
                     key={pt.scan_id}
                     role="row"
+                    tabIndex={0}
                     onClick={() => navigate(`/scans/${pt.scan_id}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/scans/${pt.scan_id}`); } }}
                     style={{ cursor: 'pointer' }}
                   >
                     <td role="cell" style={{ opacity: 0.7 }}>{new Date(pt.created_at).toLocaleString()}</td>
@@ -93,7 +95,9 @@ export function SessionDetailPage() {
                 <tr
                   key={scan.scan_id}
                   role="row"
+                  tabIndex={0}
                   onClick={() => navigate(`/scans/${scan.scan_id}`)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/scans/${scan.scan_id}`); } }}
                   style={{ cursor: 'pointer' }}
                 >
                   <td role="cell">

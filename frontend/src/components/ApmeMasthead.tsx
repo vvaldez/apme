@@ -30,7 +30,7 @@ export function ApmeMasthead() {
               id="docs"
               isExternalLink
               component="a"
-              to="https://github.com/your-org/apme-reviews"
+              href="https://github.com/ansible/apme"
             >
               Documentation
             </DropdownItem>

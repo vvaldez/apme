@@ -83,7 +83,9 @@ export function DashboardPage() {
                   <tr
                     key={scan.scan_id}
                     role="row"
+                    tabIndex={0}
                     onClick={() => navigate(`/scans/${scan.scan_id}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/scans/${scan.scan_id}`); } }}
                     style={{ cursor: 'pointer' }}
                   >
                     <td role="cell" style={{ fontFamily: 'var(--pf-t--global--font--family--mono)' }}>

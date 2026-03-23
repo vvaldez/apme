@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 // And search for "breakpoint" to see the values used in PatternFly.
 // PF uses rems for breakpoints, but we convert them to pixels here.
 const BASE_FONT_SIZE = 16;
-const breakpoints: Record<string, number> = {
+const breakpoints = {
   xs: 0,
   sm: 36 * BASE_FONT_SIZE,
   md: 48 * BASE_FONT_SIZE,
