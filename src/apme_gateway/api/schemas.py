@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SessionSummary(BaseModel):  # type: ignore[misc]
@@ -270,4 +270,4 @@ class HealthStatus(BaseModel):  # type: ignore[misc]
 
     status: str
     database: str
-    components: list[ComponentHealth] = []
+    components: list[ComponentHealth] = Field(default_factory=list)

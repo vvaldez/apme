@@ -1,9 +1,9 @@
 """gRPC reporting sink -- pushes events to a Reporting service (ADR-020).
 
 Health-gated: a background task probes the endpoint every 10 s.
-When the service is down, emit calls attempt delivery anyway (with a
-short timeout) so events are not silently dropped during brief outages.
-When it recovers, emission resumes automatically.
+When the service is marked unavailable, emit calls use a short fast-fail
+timeout (1 s) so known-down endpoints don't block the scan path.
+When the endpoint is healthy, the full timeout is used.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from apme.v1 import reporting_pb2, reporting_pb2_grpc
 logger = logging.getLogger("apme.events.grpc")
 
 _TIMEOUT_S = 10.0
+_FAST_FAIL_TIMEOUT_S = 1.0
 _HEALTH_INTERVAL_S = 10.0
 _STARTUP_PROBE_RETRIES = 5
 _STARTUP_PROBE_DELAY_S = 2.0
@@ -77,18 +78,18 @@ class GrpcReportingSink:
     async def on_scan_completed(self, event: reporting_pb2.ScanCompletedEvent) -> None:
         """Push scan event to the Reporting service.
 
-        Attempts delivery even when the endpoint was previously marked
-        unavailable, to avoid silently dropping events during brief
-        outages.  On failure the endpoint is re-probed on the next
-        health-check cycle.
+        Uses a fast-fail timeout when the endpoint is known-down so the
+        scan path is not blocked.  A successful delivery while down marks
+        the endpoint as recovered.
 
         Args:
             event: Completed scan event to deliver.
         """
         if self._stub is None:
             return
+        timeout = _TIMEOUT_S if self._available else _FAST_FAIL_TIMEOUT_S
         try:
-            await self._stub.ReportScanCompleted(event, timeout=_TIMEOUT_S)
+            await self._stub.ReportScanCompleted(event, timeout=timeout)
             if not self._available:
                 logger.info("Reporting endpoint recovered (scan delivery): %s", self._endpoint)
                 self._available = True
@@ -104,13 +105,16 @@ class GrpcReportingSink:
     async def on_fix_completed(self, event: reporting_pb2.FixCompletedEvent) -> None:
         """Push fix event to the Reporting service.
 
+        Uses a fast-fail timeout when the endpoint is known-down.
+
         Args:
             event: Completed fix event to deliver.
         """
         if self._stub is None:
             return
+        timeout = _TIMEOUT_S if self._available else _FAST_FAIL_TIMEOUT_S
         try:
-            await self._stub.ReportFixCompleted(event, timeout=_TIMEOUT_S)
+            await self._stub.ReportFixCompleted(event, timeout=timeout)
             if not self._available:
                 logger.info("Reporting endpoint recovered (fix delivery): %s", self._endpoint)
                 self._available = True

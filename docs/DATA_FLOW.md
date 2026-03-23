@@ -295,7 +295,7 @@ UI (React SPA on :8081)
     │  Renders scan history, violations, session trends
 ```
 
-The Primary deduplicates scan events within a 10-second window per session to prevent duplicate entries from gRPC framework retries.
+Event emission uses ``await`` so delivery completes before the scan response is returned.  When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the scan path.
 
 ## Local daemon mode
 

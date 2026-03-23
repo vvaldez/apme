@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import signal
+import socket
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -121,6 +122,46 @@ def _health_check(address: str, timeout: float = 3.0) -> bool:
         return False
 
 
+def _check_port_available(host: str, port: int) -> bool:
+    """Return True if *port* on *host* is free (nobody listening).
+
+    Args:
+        host: Host to probe.
+        port: TCP port number.
+
+    Returns:
+        True when the port is available (connection refused).
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.5)
+    try:
+        sock.connect((host, port))
+        sock.close()
+        return False
+    except (ConnectionRefusedError, OSError):
+        return True
+
+
+def _assert_ports_free(host: str, ports: dict[str, int]) -> None:
+    """Raise RuntimeError if any port in *ports* is already bound.
+
+    Args:
+        host: Host to probe.
+        ports: Map of service name to port number.
+
+    Raises:
+        RuntimeError: When a port is already in use.
+    """
+    for name, port in ports.items():
+        if not _check_port_available(host, port):
+            msg = (
+                f"Port {port} ({name}) is already in use — is a Podman pod or "
+                f"another daemon running? Set APME_PRIMARY_ADDRESS to connect "
+                f"to an existing service instead of starting a new daemon."
+            )
+            raise RuntimeError(msg)
+
+
 async def _run_daemon(services: dict[str, str]) -> None:
     """Run all daemon services in a single event loop (blocks forever).
 
@@ -199,11 +240,14 @@ def start_daemon(
         RuntimeError: If daemon fails to become healthy.
     """
     services: dict[str, str] = {}
-    for name, port in _DEFAULT_PORTS.items():
-        services[name] = f"{host}:{port}"
+    all_ports = dict(_DEFAULT_PORTS)
     if include_optional:
-        for name, port in _OPTIONAL_SERVICES.items():
-            services[name] = f"{host}:{port}"
+        all_ports.update(_OPTIONAL_SERVICES)
+
+    _assert_ports_free(host, all_ports)
+
+    for name, port in all_ports.items():
+        services[name] = f"{host}:{port}"
 
     pid = os.fork()
     if pid == 0:

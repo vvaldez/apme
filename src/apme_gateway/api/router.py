@@ -8,6 +8,9 @@ full scan + fix lifecycle (ADR-029).
 
 from __future__ import annotations
 
+import asyncio
+import os
+
 from fastapi import APIRouter, HTTPException, Query, WebSocket
 
 from apme_gateway.api.schemas import (
@@ -44,11 +47,10 @@ _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
 
 
 async def _probe_grpc(address: str) -> bool:
-    """Probe a gRPC service by checking channel connectivity.
+    """Probe a gRPC service via the standard health check service.
 
-    First tries the standard gRPC health check service.  If the service
-    doesn't implement it (UNIMPLEMENTED), falls back to checking whether
-    the channel reaches READY state within the timeout.
+    Returns ``True`` if the health check succeeds **or** the service
+    responds with ``UNIMPLEMENTED`` (reachable but no health service).
 
     Args:
         address: ``host:port`` of the gRPC service.
@@ -81,7 +83,7 @@ async def _probe_http(url: str) -> bool:
         url: Base URL (e.g. ``http://127.0.0.1:8765``).
 
     Returns:
-        True if the service responds with a 2xx status.
+        True if the service responds with a non-server-error status (< 500).
     """
     import httpx
 
@@ -104,8 +106,6 @@ async def _check_component(name: str, env_var: str, default: str) -> ComponentHe
     Returns:
         ComponentHealth with probed status.
     """
-    import os
-
     address = os.environ.get(env_var, "").strip() or default
     if address.startswith("http"):
         ok = await _probe_http(address)
@@ -125,8 +125,6 @@ async def health() -> HealthStatus:
     Returns:
         HealthStatus with overall, database, and per-component statuses.
     """
-    import asyncio
-
     db_ok = True
     try:
         async with get_session() as db:
