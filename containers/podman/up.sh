@@ -23,6 +23,13 @@ fi
 
 mkdir -p "$CACHE_PATH"
 
+# Tear down any existing pod so we get a clean start.
+if podman pod exists apme-pod 2>/dev/null; then
+  echo "Stopping existing apme-pod..."
+  podman pod stop apme-pod 2>/dev/null || true
+  podman pod rm apme-pod 2>/dev/null || true
+fi
+
 # Pod YAML cannot use env vars; we always inject the resolved path.
 # Escape \, &, and the | delimiter so sed substitution is safe.
 ESCAPED_PATH=$(printf '%s\n' "$CACHE_PATH" | sed -e 's/\\/\\\\/g' -e 's/[&|]/\\&/g')
