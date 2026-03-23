@@ -27,6 +27,7 @@ _DEFAULT_PORTS = {
     "native": 50055,
     "opa": 50054,
     "ansible": 50053,
+    "galaxy_proxy": 8765,
 }
 
 _OPTIONAL_SERVICES = {
@@ -213,6 +214,29 @@ async def _run_daemon(services: dict[str, str]) -> None:
 
         servers.append(await gitleaks_serve(services["gitleaks"]))
         sys.stderr.write(f"  Gitleaks validator on {services['gitleaks']}\n")
+
+    # Galaxy Proxy (uvicorn, not gRPC) — must start before Primary so
+    # APME_GALAXY_PROXY_URL is set when the engine creates session venvs.
+    if "galaxy_proxy" in services:
+        proxy_addr = services["galaxy_proxy"]
+        proxy_host, _, proxy_port_s = proxy_addr.rpartition(":")
+        proxy_url = f"http://{proxy_addr}"
+        os.environ["APME_GALAXY_PROXY_URL"] = proxy_url
+
+        import uvicorn  # noqa: PLC0415
+
+        from galaxy_proxy.proxy.server import create_app  # noqa: PLC0415
+
+        proxy_app = create_app()
+        config = uvicorn.Config(
+            proxy_app,
+            host=proxy_host or "127.0.0.1",
+            port=int(proxy_port_s),
+            log_level="warning",
+        )
+        proxy_server = uvicorn.Server(config)
+        asyncio.create_task(proxy_server.serve())
+        sys.stderr.write(f"  Galaxy Proxy on {proxy_url}\n")
 
     # Start Primary last (depends on validators being up)
     primary = await primary_serve(services["primary"])
