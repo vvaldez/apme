@@ -1,8 +1,17 @@
 """Externalize-secrets subcommand: extract hardcoded secrets to a separate vars file.
 
-Detects secrets in Ansible YAML files using gitleaks, removes the affected variables
-from the source playbook, inserts a ``vars_files:`` reference, and writes two output
-files — neither of which is the original source.
+Detects secrets in Ansible YAML files using two complementary passes:
+
+1. **Gitleaks** — value-based detection via the gitleaks binary (800+ regex patterns +
+   entropy filtering).  Catches real high-entropy credentials.
+2. **Name matching** — variable-name heuristics (``password``, ``token``, ``secret``,
+   ``private_key``, ``access_key``, …).  Catches variables whose values have too-low
+   entropy for gitleaks (e.g. placeholder/test secrets) but whose names clearly signal
+   credential storage.
+
+Both passes are always run; results are unioned.  Removes affected variables from the
+source playbook, inserts a ``vars_files:`` reference, and writes two output files —
+neither of which is the original source.
 
 Per ADR-034 this is a local-only operation; no gRPC or daemon connection is required.
 """
@@ -11,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 import shutil
 import sys
 import tempfile
@@ -21,6 +31,21 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from apme_engine.validators.gitleaks.scanner import GITLEAKS_BIN, run_gitleaks
+
+# Variable-name patterns that strongly suggest the variable holds a credential.
+# Matched as a substring (case-insensitive) against the full variable name so that
+# names like ``aws_access_key_id`` or ``db_password`` are caught without requiring
+# exact word boundaries.
+_SECRET_NAME_RE = re.compile(
+    r"(?i)(?:"
+    r"password|passwd|passphrase|"
+    r"secret|"
+    r"(?:api|access|private|signing|encryption|hmac|jwt|ssh|rsa|pgp)[_-]?key|"
+    r"credential|"
+    r"token|"
+    r"(?:db|database|mysql|pg|postgres)[_-]?pass"
+    r")"
+)
 
 
 def _make_yaml() -> YAML:
@@ -112,6 +137,23 @@ def _find_secret_keys(vars_map: CommentedMap, ranges: list[tuple[int, int]]) -> 
     return secret_keys
 
 
+def _find_secret_keys_by_name(vars_map: CommentedMap) -> list[str]:
+    """Identify keys whose names match known credential-naming conventions.
+
+    This is the second detection pass, complementing gitleaks.  Gitleaks uses
+    entropy filtering and can miss low-entropy placeholder values (e.g.
+    ``password: admin123`` or ``aws_access_key_id: AKIA...ABCDEF``).
+    Name-based matching catches those cases.
+
+    Args:
+        vars_map: The ``vars:`` CommentedMap from a play.
+
+    Returns:
+        List of variable names that look like credential holders by name.
+    """
+    return [str(k) for k in vars_map if _SECRET_NAME_RE.search(str(k))]
+
+
 def _insert_vars_files(play: CommentedMap, secrets_ref: str) -> None:
     """Insert ``vars_files: [secrets_ref]`` immediately before ``vars:`` in *play*.
 
@@ -186,9 +228,7 @@ def externalize_file(
         shutil.copy2(source, tmp_file)
         findings = run_gitleaks(tmpdir)
 
-    if not findings:
-        return ExternalizeResult(0, None, None)
-
+    # Gitleaks may miss low-entropy values; name-based detection runs regardless.
     ranges = _secret_ranges(findings)
 
     y = _make_yaml()
@@ -214,7 +254,11 @@ def externalize_file(
         if not isinstance(vars_map, CommentedMap):
             continue
 
-        secret_keys = _find_secret_keys(vars_map, ranges)
+        # Union of gitleaks value-detection and variable-name heuristics.
+        # dict.fromkeys preserves insertion order and deduplicates.
+        gitleaks_keys = _find_secret_keys(vars_map, ranges)
+        name_keys = _find_secret_keys_by_name(vars_map)
+        secret_keys = list(dict.fromkeys(gitleaks_keys + name_keys))
         if not secret_keys:
             continue
 

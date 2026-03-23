@@ -9,9 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from apme_engine.cli.externalize import (
+    _SECRET_NAME_RE,
     _build_secrets_yaml,
     _check_gitleaks,
     _find_secret_keys,
+    _find_secret_keys_by_name,
     _insert_vars_files,
     _overlaps,
     _secret_ranges,
@@ -211,6 +213,138 @@ class TestFindSecretKeys:
 
 
 # ---------------------------------------------------------------------------
+# _SECRET_NAME_RE
+# ---------------------------------------------------------------------------
+
+
+class TestSecretNameRe:
+    """Tests for the variable-name credential pattern."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "db_password",
+            "admin_password",
+            "root_passwd",
+            "github_token",
+            "access_token",
+            "auth_token",
+            "refresh_token",
+            "aws_access_key_id",
+            "aws_access_key",
+            "ssh_private_key",
+            "rsa_private_key",
+            "api_key",
+            "secret",
+            "client_secret",
+            "api_secret",
+            "signing_key",
+            "encryption_key",
+            "db_pass",
+            "mysql_pass",
+            "jwt_key",
+        ],
+    )
+    def test_secret_names_match(self, name: str) -> None:
+        """Common credential variable names are matched."""
+        assert _SECRET_NAME_RE.search(name), f"{name!r} should match"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "host",
+            "port",
+            "app_name",
+            "region",
+            "log_level",
+            "retry_count",
+            "timeout",
+            "base_url",
+        ],
+    )
+    def test_non_secret_names_no_match(self, name: str) -> None:
+        """Generic non-credential variable names are not matched."""
+        assert not _SECRET_NAME_RE.search(name), f"{name!r} should not match"
+
+
+# ---------------------------------------------------------------------------
+# _find_secret_keys_by_name
+# ---------------------------------------------------------------------------
+
+
+class TestFindSecretKeysByName:
+    """Tests for name-based secret key detection."""
+
+    def _load_vars(self, yaml_text: str) -> object:
+        from ruamel.yaml import YAML
+
+        y: YAML = YAML(typ="rt")
+        data = y.load(yaml_text)
+        return data[0]["vars"]  # type: ignore[index]
+
+    def test_detects_password_var(self) -> None:
+        """Variable named db_password is detected by name."""
+        play_yaml = dedent("""\
+            ---
+            - name: Test
+              hosts: localhost
+              vars:
+                db_password: admin123
+                safe_var: not-a-secret
+              tasks: []
+        """)
+        vars_map = self._load_vars(play_yaml)
+        result = _find_secret_keys_by_name(vars_map)  # type: ignore[arg-type]
+        assert "db_password" in result
+        assert "safe_var" not in result
+
+    def test_detects_token_var(self) -> None:
+        """Variable named github_token is detected by name."""
+        play_yaml = dedent("""\
+            ---
+            - name: Test
+              hosts: localhost
+              vars:
+                github_token: ghp_lowentropy
+              tasks: []
+        """)
+        vars_map = self._load_vars(play_yaml)
+        result = _find_secret_keys_by_name(vars_map)  # type: ignore[arg-type]
+        assert "github_token" in result
+
+    def test_detects_access_key_var(self) -> None:
+        """Variable named aws_access_key_id is detected by name."""
+        play_yaml = dedent("""\
+            ---
+            - name: Test
+              hosts: localhost
+              vars:
+                aws_access_key_id: AKIA1234567890ABCDEF
+              tasks: []
+        """)
+        vars_map = self._load_vars(play_yaml)
+        result = _find_secret_keys_by_name(vars_map)  # type: ignore[arg-type]
+        assert "aws_access_key_id" in result
+
+    def test_no_false_positives_on_clean_vars(self) -> None:
+        """Non-credential variable names return empty list."""
+        play_yaml = dedent("""\
+            ---
+            - name: Test
+              hosts: localhost
+              vars:
+                host: localhost
+                port: 5432
+                app_name: myapp
+                region: us-east-1
+              tasks: []
+        """)
+        vars_map = self._load_vars(play_yaml)
+        result = _find_secret_keys_by_name(vars_map)  # type: ignore[arg-type]
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
 # _insert_vars_files
 # ---------------------------------------------------------------------------
 
@@ -354,7 +488,7 @@ class TestExternalizeFile:
         assert source.read_text() == original_text
 
     def test_no_findings_returns_zero(self, tmp_path: Path) -> None:
-        """No gitleaks findings → zero secrets count, no files written.
+        """No gitleaks findings AND no credential-named vars → zero count, no files written.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -449,6 +583,46 @@ class TestExternalizeFile:
 
         assert result.skipped is True
         assert not secrets_path.exists()
+
+    def test_name_based_detection_catches_low_entropy_secrets(self, tmp_path: Path) -> None:
+        """Variables with credential-like names are externalized even when gitleaks finds nothing.
+
+        This is the regression case for examples2/secrets_example.yml where values like
+        ``AKIA1234567890ABCDEF`` (sequential, low entropy) are not detected by gitleaks
+        but the variable names clearly signal credential storage.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        play_yaml = dedent("""\
+            ---
+            - name: Test
+              hosts: localhost
+              vars:
+                aws_access_key_id: AKIA1234567890ABCDEF
+                db_password: admin123
+                admin_password: admin123
+                github_token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef1234
+                app_name: myapp
+              tasks: []
+        """)
+        source = tmp_path / "play.yml"
+        source.write_text(play_yaml)
+        secrets_path = tmp_path / "secrets.yml"
+
+        # Gitleaks finds nothing (low-entropy values)
+        with patch("apme_engine.cli.externalize.run_gitleaks", return_value=[]):
+            result = externalize_file(source, secrets_path)
+
+        assert result.secrets_count == 4
+        assert set(result.secret_names) == {"aws_access_key_id", "db_password", "admin_password", "github_token"}
+
+        ext_text = (tmp_path / "play.externalized.yml").read_text()
+        # Non-secret var stays inline
+        assert "app_name" in ext_text
+        # Secret vars are gone from the playbook
+        for name in ("aws_access_key_id", "db_password", "admin_password", "github_token"):
+            assert name not in ext_text or "vars_files" in ext_text
 
     def test_empty_vars_block_removed(self, tmp_path: Path) -> None:
         """When all vars are secrets the empty vars block is removed from output.
