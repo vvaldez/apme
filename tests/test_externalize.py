@@ -418,6 +418,12 @@ class TestBuildSecretsYaml:
         text = _build_secrets_yaml({"k": "v"}, "play.yml")
         assert "ansible-vault" in text
 
+    def test_has_document_markers(self) -> None:
+        """Output starts with '---' and ends with '...'."""
+        text = _build_secrets_yaml({"k": "v"}, "play.yml")
+        assert text.startswith("---") or "---\n" in text
+        assert text.rstrip().endswith("...")
+
 
 # ---------------------------------------------------------------------------
 # externalize_file

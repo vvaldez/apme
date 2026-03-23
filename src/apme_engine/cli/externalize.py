@@ -189,6 +189,8 @@ def _build_secrets_yaml(secrets: dict[str, object], source_name: str) -> str:
         YAML text ready to write to the secrets file.
     """
     y = _make_yaml()
+    y.explicit_start = True
+    y.explicit_end = True
     data: CommentedMap = CommentedMap(secrets)
     data.yaml_set_start_comment(
         f"Externalized secrets — store securely, do not commit to version control\n"
