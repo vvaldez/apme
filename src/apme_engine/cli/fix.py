@@ -64,6 +64,7 @@ def run_fix(args: argparse.Namespace) -> None:
         ansible_core_version=getattr(args, "ansible_version", None) or "",
         collection_specs=getattr(args, "collections", None) or [],
         enable_ai=getattr(args, "ai", False),
+        ai_model=getattr(args, "model", None) or "",
         session_id=session_id,
     )
 

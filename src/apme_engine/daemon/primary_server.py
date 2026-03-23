@@ -1166,14 +1166,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             return violations
 
         registry = build_default_registry()
-        # TODO(ADR-025): Wire AIProvider into RemediationEngine when
-        # fix_opts.enable_ai is True.  Currently Tier 2 AI proposals are
-        # never generated because no ai_provider is supplied.
+        ai_provider = self._resolve_ai_provider(fix_opts)
         engine = RemediationEngine(
             registry=registry,
             scan_fn=scan_fn,
             max_passes=max_passes,
             verbose=True,
+            ai_provider=ai_provider,  # type: ignore[arg-type]
         )
 
         yaml_paths = [str(temp_dir / f.path) for f in formatted_files if f.path.endswith((".yml", ".yaml"))]
@@ -1246,9 +1245,23 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        # Only present proposals if AI is enabled via FixOptions
+        # Present AI proposals if the engine produced them, or fall back to
+        # stub proposals from remaining violations when AI is enabled but the
+        # provider didn't generate fixes.
         ai_enabled = fix_opts.enable_ai if fix_opts else False
-        if report.remaining_ai and ai_enabled:
+        if report.ai_proposed:
+            session.current_tier = 2
+            proposals = self._build_proposals_from_ai(report.ai_proposed)
+            session.proposals = {p.id: p for p in proposals}
+            session.status = 1  # AWAITING_APPROVAL
+            yield SessionEvent(
+                proposals=ProposalsReady(
+                    proposals=proposals,
+                    tier=2,
+                    status=1,
+                ),
+            )
+        elif report.remaining_ai and ai_enabled:
             session.current_tier = 2
             proposals = self._build_proposals_from_remaining(
                 report.remaining_ai,
@@ -1269,25 +1282,118 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 yield event
 
     @staticmethod
+    def _resolve_ai_provider(fix_opts: FixOptions | None) -> object | None:
+        """Create an AbbenayProvider when AI escalation is requested.
+
+        Uses fix_opts.ai_model for the model, falls back to APME_AI_MODEL
+        env var.  Abbenay address is auto-discovered or read from
+        APME_ABBENAY_ADDR.
+
+        Args:
+            fix_opts: FixOptions from the client request (may be None).
+
+        Returns:
+            AbbenayProvider instance, or None if AI is not enabled or
+            prerequisites are missing.
+        """
+        if not fix_opts or not fix_opts.enable_ai:
+            return None
+
+        try:
+            from apme_engine.remediation.abbenay_provider import (  # noqa: PLC0415
+                AbbenayProvider,
+                discover_abbenay,
+            )
+        except ImportError:
+            logger.warning("AI escalation requested but abbenay_grpc is not installed")
+            return None
+
+        addr = os.environ.get("APME_ABBENAY_ADDR") or discover_abbenay()
+        if not addr:
+            logger.warning("AI escalation requested but no Abbenay daemon found")
+            return None
+
+        model = fix_opts.ai_model or os.environ.get("APME_AI_MODEL")
+        if not model:
+            logger.warning("AI escalation requested but no model specified (--model or APME_AI_MODEL)")
+            return None
+
+        token = os.environ.get("APME_ABBENAY_TOKEN")
+
+        try:
+            provider = AbbenayProvider(addr, token=token, model=model)
+        except ImportError:
+            logger.warning("Failed to create AbbenayProvider — abbenay-client not installed")
+            return None
+
+        logger.info("AI provider ready: %s model=%s", addr, model)
+        return provider
+
+    @staticmethod
+    def _build_proposals_from_ai(
+        ai_proposals: Sequence[object],
+    ) -> list[Proposal]:
+        """Convert AIProposal objects into Proposal protos with diff data.
+
+        Each AIPatch within an AIProposal becomes a separate Proposal proto
+        with before_text, after_text, and diff_hunk populated from the AI
+        engine output.
+
+        Args:
+            ai_proposals: AIProposal objects from the remediation engine.
+
+        Returns:
+            List of Proposal protos with full diff data.
+        """
+        from apme_engine.remediation.ai_provider import AIProposal  # noqa: PLC0415
+
+        proposals: list[Proposal] = []
+        idx = 0
+        for item in ai_proposals:
+            ap: AIProposal = item  # type: ignore[assignment]
+            orig_lines = ap.original_yaml.splitlines(keepends=True)
+            for patch in ap.patches:
+                start_idx = patch.line_start - 1
+                end_idx = patch.line_end
+                before_text = "".join(orig_lines[start_idx:end_idx])
+
+                proposals.append(
+                    Proposal(
+                        id=f"t2-{idx:04d}",
+                        file=ap.file,
+                        rule_id=patch.rule_id,
+                        line_start=patch.line_start,
+                        line_end=patch.line_end,
+                        before_text=before_text,
+                        after_text=patch.fixed_lines,
+                        diff_hunk=patch.diff_hunk,
+                        confidence=patch.confidence,
+                        explanation=patch.explanation,
+                        tier=2,
+                    )
+                )
+                idx += 1
+        return proposals
+
+    @staticmethod
     def _build_proposals_from_remaining(
         violations: list[ViolationDict],
         *,
         tier: int,
     ) -> list[Proposal]:
-        """Convert remaining violations into Proposal protos for client review.
+        """Convert remaining violations into stub Proposal protos.
 
-        These proposals intentionally omit before_text/after_text/diff_hunk:
-        they represent violations that need AI (Tier 2) or agentic (Tier 3)
-        processing to generate actual fixes.  The approval path in
-        _session_apply_approved skips proposals without after_text.
-        When Tier 2 AI is wired (ADR-025), it will populate these fields.
+        Used as a fallback when AI is enabled but the provider did not
+        generate fixes (e.g. provider unavailable, all patches failed
+        validation).  These stubs omit before_text/after_text/diff_hunk
+        so the client can still display them for informational review.
 
         Args:
             violations: Violation dicts from the remediation report.
             tier: Remediation tier (2=AI, 3=agentic).
 
         Returns:
-            List of Proposal protos.
+            List of Proposal protos (without diff data).
         """
         proposals: list[Proposal] = []
         for i, v in enumerate(violations):

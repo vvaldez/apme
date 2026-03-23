@@ -112,6 +112,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable Tier 2 AI-assisted remediation",
     )
     fix_p.add_argument(
+        "--model",
+        default=None,
+        help="AI model identifier (e.g. 'openai/gpt-4o'); required when --ai is set",
+    )
+    fix_p.add_argument(
+        "--abbenay-addr",
+        default=None,
+        help="Abbenay daemon address (auto-discovered if omitted)",
+    )
+    fix_p.add_argument(
+        "--abbenay-token",
+        default=None,
+        help="Consumer auth token for Abbenay policy access",
+    )
+    fix_p.add_argument(
         "--json",
         action="store_true",
         default=False,

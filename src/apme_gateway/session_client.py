@@ -414,6 +414,7 @@ async def handle_session(
         ansible_version: str = options.get("ansible_version", "")
         collections: list[str] = options.get("collections", [])
         enable_ai: bool = options.get("enable_ai", True)
+        ai_model: str = options.get("ai_model", "")
 
         scan_id = str(uuid.uuid4())
 
@@ -432,6 +433,7 @@ async def handle_session(
                 ansible_core_version=ansible_version,
                 collection_specs=collections or [],
                 enable_ai=enable_ai,
+                ai_model=ai_model,
             )
             first_chunk.fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
             yield first_chunk
