@@ -1,4 +1,20 @@
 /**
+ * Strip validator prefix (e.g. "native:L042" → "L042") for description lookup.
+ */
+export function bareRuleId(ruleId: string): string {
+  const idx = ruleId.indexOf(":");
+  if (idx > 0 && idx < ruleId.length - 1) return ruleId.slice(idx + 1);
+  return ruleId;
+}
+
+/**
+ * Look up a rule description, handling prefixed IDs like "native:L042".
+ */
+export function getRuleDescription(ruleId: string): string {
+  return RULE_DESCRIPTIONS[ruleId] ?? RULE_DESCRIPTIONS[bareRuleId(ruleId)] ?? "";
+}
+
+/**
  * Rule ID → human-readable description mapping.
  * Source: docs/RULE_CATALOG.md (auto-generated from validator frontmatter).
  */

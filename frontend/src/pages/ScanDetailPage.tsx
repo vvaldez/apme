@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getScan } from "../services/api";
 import type { ScanDetail, ViolationDetail } from "../types/api";
-import { RULE_DESCRIPTIONS } from "../data/ruleDescriptions";
+import { getRuleDescription } from "../data/ruleDescriptions";
 
 function groupByFile(violations: ViolationDetail[]): Map<string, ViolationDetail[]> {
   const map = new Map<string, ViolationDetail[]>();
@@ -43,6 +43,15 @@ function severityLabel(level: string, ruleId?: string): string {
   return "HINT";
 }
 
+function classToLabel(cls: string): string {
+  const map: Record<string, string> = {
+    critical: "CRITICAL", error: "ERROR", "very-high": "VERY HIGH",
+    high: "HIGH", medium: "MEDIUM", warning: "WARN",
+    low: "LOW", "very-low": "VERY LOW", hint: "HINT",
+  };
+  return map[cls] ?? cls.toUpperCase();
+}
+
 function severityOrder(cls: string): number {
   const order: Record<string, number> = {
     critical: 0, error: 1, "very-high": 2, high: 3,
@@ -65,8 +74,9 @@ export function ScanDetailPage() {
   const [scan, setScan] = useState<ScanDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [sevFilter, setSevFilter] = useState<string | null>(null);
-  const [ruleFilter, setRuleFilter] = useState<string>("");
+  const [sevFilters, setSevFilters] = useState<Set<string>>(new Set());
+  const [ruleFilters, setRuleFilters] = useState<Set<string>>(new Set());
+  const [logsCollapsed, setLogsCollapsed] = useState(true);
 
   useEffect(() => {
     if (!scanId) return;
@@ -97,14 +107,14 @@ export function ScanDetailPage() {
   const filtered = useMemo(() => {
     if (!scan) return [];
     let violations = scan.violations;
-    if (sevFilter) {
-      violations = violations.filter((v) => severityClass(v.level, v.rule_id) === sevFilter);
+    if (sevFilters.size > 0) {
+      violations = violations.filter((v) => sevFilters.has(severityClass(v.level, v.rule_id)));
     }
-    if (ruleFilter) {
-      violations = violations.filter((v) => v.rule_id === ruleFilter);
+    if (ruleFilters.size > 0) {
+      violations = violations.filter((v) => ruleFilters.has(v.rule_id));
     }
     return violations;
-  }, [scan, sevFilter, ruleFilter]);
+  }, [scan, sevFilters, ruleFilters]);
 
   const groups = useMemo(() => groupByFile(filtered), [filtered]);
 
@@ -113,8 +123,24 @@ export function ScanDetailPage() {
 
   const expandAll = () => setExpanded(new Set(groups.keys()));
   const collapseAll = () => setExpanded(new Set());
-  const clearFilters = () => { setSevFilter(null); setRuleFilter(""); };
-  const hasFilters = sevFilter !== null || ruleFilter !== "";
+  const hasFilters = sevFilters.size > 0 || ruleFilters.size > 0;
+  const clearFilters = () => { setSevFilters(new Set()); setRuleFilters(new Set()); };
+
+  const toggleSev = (cls: string) => {
+    setSevFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls)) next.delete(cls); else next.add(cls);
+      return next;
+    });
+  };
+
+  const toggleRule = (rule: string) => {
+    setRuleFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(rule)) next.delete(rule); else next.add(rule);
+      return next;
+    });
+  };
 
   return (
     <>
@@ -138,6 +164,7 @@ export function ScanDetailPage() {
         </div>
       </header>
 
+      {/* Summary card */}
       <div className="apme-summary-card">
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div className={`apme-status-icon ${scan.total_violations > 0 ? "failed" : "passed"}`}>
@@ -163,12 +190,12 @@ export function ScanDetailPage() {
         </div>
       </div>
 
-      {/* Severity breakdown chips */}
+      {/* Severity breakdown chips — multi-select */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
         {SEVERITY_ORDER.map((cls) => {
           const count = sevCounts.get(cls) ?? 0;
           if (count === 0) return null;
-          const isActive = sevFilter === cls;
+          const isActive = sevFilters.has(cls);
           return (
             <button
               key={cls}
@@ -178,69 +205,79 @@ export function ScanDetailPage() {
                 padding: "4px 12px",
                 fontSize: 12,
                 border: isActive ? "2px solid var(--apme-text-primary)" : "2px solid transparent",
-                opacity: sevFilter && !isActive ? 0.5 : 1,
+                opacity: sevFilters.size > 0 && !isActive ? 0.5 : 1,
               }}
-              onClick={() => setSevFilter(isActive ? null : cls)}
-              title={`Filter by ${cls.replace("-", " ")}`}
+              onClick={() => toggleSev(cls)}
+              title={`Toggle filter: ${classToLabel(cls)}`}
             >
-              {severityLabel(cls === "critical" ? "fatal" : cls.replace("-", "_"))} {count}
+              {classToLabel(cls)} {count}
             </button>
           );
         })}
       </div>
 
-      {/* Rule filter + clear */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-        <select
-          value={ruleFilter}
-          onChange={(e) => setRuleFilter(e.target.value)}
-          style={{
-            padding: "6px 12px",
-            background: "var(--apme-input-bg)",
-            color: "var(--apme-text-primary)",
-            border: "1px solid var(--apme-border)",
-            borderRadius: 4,
-            fontSize: 13,
-          }}
-        >
-          <option value="">All Rules ({uniqueRules.length})</option>
-          {uniqueRules.map((r) => (
-            <option key={r} value={r}>{r} — {RULE_DESCRIPTIONS[r] ?? ""}</option>
-          ))}
-        </select>
-        {hasFilters && (
+      {/* Rule filter chips — multi-select */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+        {uniqueRules.map((r) => {
+          const isActive = ruleFilters.has(r);
+          return (
+            <button
+              key={r}
+              onClick={() => toggleRule(r)}
+              title={getRuleDescription(r) || r}
+              style={{
+                cursor: "pointer",
+                padding: "3px 10px",
+                fontSize: 12,
+                fontFamily: "var(--pf-v5-global--FontFamily--monospace, monospace)",
+                background: isActive ? "var(--apme-accent)" : "var(--apme-bg-tertiary)",
+                color: isActive ? "#fff" : "var(--apme-text-secondary)",
+                border: "1px solid " + (isActive ? "var(--apme-accent)" : "var(--apme-border)"),
+                borderRadius: 4,
+              }}
+            >
+              {r}
+            </button>
+          );
+        })}
+      </div>
+
+      {hasFilters && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <button className="apme-btn apme-btn-secondary" onClick={clearFilters} style={{ fontSize: 12, padding: "4px 10px" }}>
             Clear Filters
           </button>
-        )}
-        <span style={{ color: "var(--apme-text-muted)", fontSize: 13 }}>
-          {filtered.length !== scan.violations.length
-            ? `Showing ${filtered.length} of ${scan.violations.length}`
-            : `${scan.violations.length} total`}
-        </span>
-      </div>
-
-      {/* Pipeline logs */}
-      {scan.logs.length > 0 && (
-        <div className="apme-section-header" style={{ marginTop: 0 }}>
-          <h2 className="apme-section-title">Pipeline Log</h2>
+          <span style={{ color: "var(--apme-text-muted)", fontSize: 13 }}>
+            Showing {filtered.length} of {scan.violations.length}
+          </span>
         </div>
       )}
+
+      {/* Pipeline logs — collapsible */}
       {scan.logs.length > 0 && (
         <div className="apme-table-container" style={{ marginBottom: 24 }}>
-          <table className="apme-data-table">
-            <thead>
-              <tr><th>Phase</th><th>Message</th></tr>
-            </thead>
-            <tbody>
-              {scan.logs.map((lg) => (
-                <tr key={lg.id}>
-                  <td><span className="apme-badge running">{lg.phase}</span></td>
-                  <td>{lg.message}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div
+            style={{ padding: "12px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, borderBottom: logsCollapsed ? "none" : "1px solid var(--apme-border)" }}
+            onClick={() => setLogsCollapsed((p) => !p)}
+          >
+            <span style={{ color: "var(--apme-text-dimmed)" }}>{logsCollapsed ? "\u25B6" : "\u25BC"}</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>Pipeline Log ({scan.logs.length})</span>
+          </div>
+          {!logsCollapsed && (
+            <table className="apme-data-table">
+              <thead>
+                <tr><th>Phase</th><th>Message</th></tr>
+              </thead>
+              <tbody>
+                {scan.logs.map((lg) => (
+                  <tr key={lg.id}>
+                    <td><span className="apme-badge running">{lg.phase}</span></td>
+                    <td>{lg.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -285,7 +322,7 @@ export function ScanDetailPage() {
                     <span className={`apme-severity ${severityClass(v.level, v.rule_id)}`}>
                       {severityLabel(v.level, v.rule_id)}
                     </span>
-                    <span className="apme-rule-id" title={RULE_DESCRIPTIONS[v.rule_id] ?? ""}>{v.rule_id}</span>
+                    <span className="apme-rule-id" title={getRuleDescription(v.rule_id)}>{v.rule_id}</span>
                     {v.remediation_class > 0 && (
                       <span className="apme-badge running" style={{ fontSize: 10 }}>{tierLabel(v.remediation_class)}</span>
                     )}

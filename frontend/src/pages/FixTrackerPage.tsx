@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getFixRates } from "../services/api";
 import type { FixRateEntry } from "../types/api";
-import { RULE_DESCRIPTIONS } from "../data/ruleDescriptions";
+import { getRuleDescription } from "../data/ruleDescriptions";
 
 export function FixTrackerPage() {
   const [data, setData] = useState<FixRateEntry[]>([]);
@@ -34,12 +34,12 @@ export function FixTrackerPage() {
           {data.map((entry) => (
             <div
               key={entry.rule_id}
-              title={RULE_DESCRIPTIONS[entry.rule_id] ?? entry.rule_id}
+              title={getRuleDescription(entry.rule_id) || entry.rule_id}
               style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 20px", borderBottom: "1px solid var(--apme-border)", cursor: "default" }}
             >
               <span className="apme-rule-id" style={{ minWidth: 60 }}>{entry.rule_id}</span>
               <span style={{ minWidth: 200, fontSize: 12, color: "var(--apme-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {RULE_DESCRIPTIONS[entry.rule_id] ?? ""}
+                {getRuleDescription(entry.rule_id)}
               </span>
               <div style={{ flex: 1, background: "var(--apme-bg-tertiary)", borderRadius: 4, height: 20 }}>
                 <div style={{

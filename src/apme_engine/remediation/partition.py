@@ -11,14 +11,6 @@ from apme_engine.remediation.registry import TransformRegistry
 
 AI_PROPOSABLE_SCOPES: frozenset[str] = frozenset({RuleScope.TASK, RuleScope.BLOCK})
 
-# Play/playbook-scoped rules where the fix is simple enough for AI to propose.
-# These override the scope-based exclusion above.
-AI_OVERRIDE_RULES: frozenset[str] = frozenset(
-    {
-        "L003",  # "Each play should have a name" — simple name insertion
-    }
-)
-
 # Task-scoped rules whose remediation requires cross-file context.
 # These are structurally task-level but the fix needs role/taskfile inventory.
 CROSS_FILE_RULES: frozenset[str] = frozenset(
@@ -98,7 +90,7 @@ def partition_violations(
         elif bare_id in CROSS_FILE_RULES:
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
-        elif _get_scope(v) not in AI_PROPOSABLE_SCOPES and bare_id not in AI_OVERRIDE_RULES:
+        elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
             v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
         elif v.get("ai_proposable", True):
@@ -126,7 +118,7 @@ def classify_violation(violation: ViolationDict, registry: TransformRegistry) ->
         return RemediationClass.AUTO_FIXABLE
     if bare_id in CROSS_FILE_RULES:
         return RemediationClass.MANUAL_REVIEW
-    if _get_scope(violation) not in AI_PROPOSABLE_SCOPES and bare_id not in AI_OVERRIDE_RULES:
+    if _get_scope(violation) not in AI_PROPOSABLE_SCOPES:
         return RemediationClass.MANUAL_REVIEW
     if violation.get("ai_proposable", True):
         return RemediationClass.AI_CANDIDATE
