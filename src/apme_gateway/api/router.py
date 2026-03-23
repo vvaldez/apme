@@ -1,15 +1,14 @@
-"""REST API endpoints for the gateway.
+"""REST and WebSocket API endpoints for the gateway.
 
 Read endpoints serve persisted scan data.  Write operations happen via the
-gRPC Reporting servicer (engine push model, ADR-020).  The ``POST /scans``
-endpoint initiates a scan by streaming files to Primary and relaying
-real-time progress back via SSE (ADR-029).
+gRPC Reporting servicer (engine push model, ADR-020).  The ``WS /ws/session``
+endpoint bridges the browser to Primary's FixSession gRPC stream for the
+full scan + fix lifecycle (ADR-029).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, WebSocket
 
 from apme_gateway.api.schemas import (
     AiAcceptanceEntry,
@@ -318,51 +317,24 @@ def _scan_to_summary(scan: Scan) -> ScanSummary:
     )
 
 
-# ── Scan Initiation (ADR-029) ────────────────────────────────────────
+# ── Session WebSocket (ADR-028 / ADR-029) ────────────────────────────
 
 
-@router.post("/scans")  # type: ignore[untyped-decorator]
-async def initiate_scan(
-    files: list[UploadFile],
-    ansible_version: str = Form(default=""),
-    collections: str = Form(default=""),
-) -> StreamingResponse:
-    """Initiate a scan by uploading files and stream progress via SSE.
+@router.websocket("/ws/session")  # type: ignore[untyped-decorator]
+async def session_ws(websocket: WebSocket) -> None:
+    """Bidirectional WebSocket bridge to Primary's FixSession gRPC stream.
 
-    The gateway writes uploaded files to a temp directory, streams
-    ``ScanChunk`` messages to Primary via gRPC, and relays real-time
-    ``ScanEvent`` progress back to the browser as Server-Sent Events.
+    Handles the full scan + fix lifecycle: file upload, real-time progress,
+    Tier 1 auto-fix results, AI proposal delivery, interactive approval,
+    and final session results — all over a single connection.
 
     Args:
-        files: Uploaded files (multipart/form-data).
-        ansible_version: Optional Ansible core version constraint.
-        collections: Optional comma-separated collection specifiers.
-
-    Returns:
-        StreamingResponse with ``text/event-stream`` content type.
+        websocket: Incoming WebSocket connection.
     """
     from apme_gateway.config import load_config
-    from apme_gateway.scan_client import UploadedFile, run_scan_stream
+    from apme_gateway.session_client import handle_session
+
+    await websocket.accept()
 
     cfg = load_config()
-
-    uploaded: list[UploadedFile] = []
-    for f in files:
-        content = await f.read()
-        rel_path = f.filename or "unknown"
-        uploaded.append(UploadedFile(relative_path=rel_path, content=content))
-
-    coll_list = [c.strip() for c in collections.split(",") if c.strip()] if collections else None
-
-    event_stream = run_scan_stream(
-        uploaded,
-        cfg.primary_address,
-        ansible_version=ansible_version,
-        collections=coll_list,
-    )
-
-    return StreamingResponse(
-        event_stream,
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    await handle_session(websocket, cfg.primary_address)

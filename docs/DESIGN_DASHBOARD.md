@@ -71,43 +71,47 @@ Primary stays pure gRPC and stateless. The gateway handles everything HTTP, auth
 
 ## API design
 
-### REST endpoints
+### Endpoints
 
 ```
-POST   /api/v1/scans                  Initiate a scan (upload files or point to repo)
+WS     /api/v1/ws/session             Unified scan + fix session (file upload,
+                                       real-time progress, Tier 1 results,
+                                       AI proposals, approval — single connection)
+
 GET    /api/v1/scans                  List scan history (paginated, filterable)
 GET    /api/v1/scans/{scan_id}        Get scan result (violations, diagnostics)
 DELETE /api/v1/scans/{scan_id}        Delete a scan record
-
-POST   /api/v1/format                 Format files (upload, receive diffs)
 
 GET    /api/v1/health                 Aggregate health (gateway + all backend services)
 
 GET    /api/v1/rules                  List all rules (from RULE_CATALOG)
 GET    /api/v1/rules/{rule_id}        Rule detail (description, examples, fixer status)
-
-POST   /api/v1/fix                   Run the fix pipeline (format → scan → remediate)
-GET    /api/v1/fix/{job_id}          Get fix job status and results
-
-GET    /api/v1/remediation/queue     List AI-proposed fixes pending review
-POST   /api/v1/remediation/{id}/accept    Accept a proposed fix
-POST   /api/v1/remediation/{id}/reject    Reject a proposed fix
 ```
 
-### WebSocket
+### WebSocket Session Protocol
 
-```
-WS  /api/v1/scans/{scan_id}/stream   Real-time scan progress (phases, validator status)
-WS  /api/v1/fix/{job_id}/stream      Real-time fix pipeline progress
-```
+A single WebSocket connection at `/api/v1/ws/session` handles the full scan +
+fix lifecycle. The browser uploads files, receives real-time progress, reviews
+Tier 1 auto-fix results and AI proposals, and approves/rejects — all inline.
 
-WebSocket streams emit JSON events as each phase completes:
+Client → Server messages:
 
 ```json
-{"event": "engine_complete", "elapsed_ms": 142.0, "files_scanned": 12}
-{"event": "validator_complete", "validator": "native", "violations": 5, "elapsed_ms": 23.0}
-{"event": "validator_complete", "validator": "opa", "violations": 8, "elapsed_ms": 15.0}
-{"event": "scan_complete", "total_violations": 13, "total_ms": 180.0}
+{"type": "start", "options": {"ansible_version": "2.16", "enable_ai": true}}
+{"type": "file", "path": "playbooks/deploy.yml", "content": "<base64>"}
+{"type": "files_done"}
+{"type": "approve", "approved_ids": ["proposal-1", "proposal-3"]}
+{"type": "close"}
+```
+
+Server → Client messages:
+
+```json
+{"type": "session_created", "session_id": "abc-123", "scan_id": "scan-456", "ttl_seconds": 600}
+{"type": "progress", "phase": "validation", "message": "Running native validator...", "level": 2}
+{"type": "tier1_complete", "idempotency_ok": true, "patches": [...], "format_diffs": [...]}
+{"type": "proposals", "tier": 2, "status": "AWAITING_APPROVAL", "proposals": [{"id": "p1", "file": "playbooks/deploy.yml", "rule_id": "M001", "confidence": 0.92, ...}]}
+{"type": "result", "scan_id": "scan-456", "patches": [...], "remaining_violations": [...]}
 ```
 
 ### OpenAPI
@@ -224,8 +228,8 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 
 ### Phase 4a: API gateway + scan history
 
-1. **Gateway container** — FastAPI app with gRPC client to Primary
-2. **`POST /api/v1/scans`** — accept file upload or directory path, call `Primary.Scan`, store result
+1. **Gateway container** — FastAPI app with gRPC client + WebSocket to Primary
+2. **`WS /api/v1/ws/session`** — unified scan + fix session over WebSocket
 3. **`GET /api/v1/scans`** — list stored scans with pagination and filtering
 4. **`GET /api/v1/scans/{id}`** — return violations + diagnostics
 5. **Persistence** — SQLite backend with SQLAlchemy async

@@ -936,3 +936,294 @@ body,
   font-size: 13px;
   margin-bottom: 16px;
 }
+
+/* ── Checkbox label ──────────────────────────────────────────────── */
+
+.apme-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.apme-checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--apme-accent);
+}
+
+/* ── Tier 1 results ──────────────────────────────────────────────── */
+
+.apme-tier1-results {
+  background: var(--apme-bg-secondary);
+  border: 1px solid var(--apme-border);
+  border-radius: 4px;
+  margin-bottom: 24px;
+  max-width: 780px;
+}
+
+.apme-tier1-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--apme-border);
+}
+
+.apme-tier1-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.apme-tier1-diffs {
+  padding: 12px 20px;
+}
+
+/* ── Diff blocks ─────────────────────────────────────────────────── */
+
+.apme-diff-block {
+  border: 1px solid var(--apme-border);
+  border-radius: 4px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.apme-diff-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--apme-bg-tertiary);
+  border-bottom: 1px solid var(--apme-border);
+  font-size: 13px;
+}
+
+.apme-diff-rules {
+  font-family: var(--pf-v5-global--FontFamily--monospace, monospace);
+  color: var(--apme-text-muted);
+  font-size: 12px;
+}
+
+.apme-diff-content {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--pf-v5-global--FontFamily--monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--apme-text-secondary);
+  background: var(--apme-bg-primary);
+}
+
+/* ── Proposals section ───────────────────────────────────────────── */
+
+.apme-proposals-section {
+  max-width: 780px;
+  margin-bottom: 24px;
+}
+
+.apme-proposals-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  gap: 16px;
+}
+
+.apme-proposals-header h3 {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.apme-proposals-hint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--apme-text-muted);
+}
+
+.apme-proposals-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.apme-proposals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Proposal card ───────────────────────────────────────────────── */
+
+.apme-proposal-card {
+  background: var(--apme-bg-secondary);
+  border: 1px solid var(--apme-border);
+  border-radius: 4px;
+  transition: border-color 0.15s;
+}
+
+.apme-proposal-card.selected {
+  border-color: var(--apme-green);
+}
+
+.apme-proposal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+}
+
+.apme-proposal-header:hover {
+  background: var(--apme-bg-tertiary);
+}
+
+.apme-proposal-checkbox {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--apme-green);
+  cursor: pointer;
+}
+
+.apme-proposal-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.apme-proposal-file {
+  font-family: var(--pf-v5-global--FontFamily--monospace, monospace);
+  font-size: 13px;
+  color: var(--apme-link);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apme-proposal-confidence {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.apme-confidence-bar {
+  width: 48px;
+  height: 6px;
+  background: var(--apme-bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.apme-confidence-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.apme-confidence-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--apme-text-muted);
+  min-width: 30px;
+  text-align: right;
+}
+
+.apme-proposal-expand {
+  font-size: 12px !important;
+  padding: 3px 10px !important;
+  flex-shrink: 0;
+}
+
+.apme-proposal-explanation {
+  padding: 0 16px 12px 46px;
+  font-size: 13px;
+  color: var(--apme-text-muted);
+  line-height: 1.5;
+}
+
+.apme-proposal-diff {
+  border-top: 1px solid var(--apme-border);
+}
+
+/* ── Side-by-side diff ───────────────────────────────────────────── */
+
+.apme-side-by-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.apme-diff-pane {
+  overflow: hidden;
+}
+
+.apme-diff-pane:first-child {
+  border-right: 1px solid var(--apme-border);
+}
+
+.apme-diff-pane-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--apme-text-muted);
+  background: var(--apme-bg-tertiary);
+  border-bottom: 1px solid var(--apme-border);
+}
+
+.apme-diff-line {
+  display: flex;
+  gap: 8px;
+}
+
+.apme-diff-linenum {
+  color: var(--apme-text-dimmed);
+  min-width: 24px;
+  text-align: right;
+  user-select: none;
+}
+
+.apme-diff-remove {
+  background: rgba(255, 23, 68, 0.05);
+}
+
+.apme-diff-add {
+  background: rgba(91, 163, 82, 0.05);
+}
+
+/* ── Session complete ────────────────────────────────────────────── */
+
+.apme-session-complete {
+  text-align: center;
+  padding: 32px 0;
+}
+
+.apme-session-complete h2 {
+  margin: 0 0 16px;
+}
+
+.apme-remaining-list {
+  padding: 8px 0;
+}
+
+.apme-remaining-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--apme-border);
+}
+
+.apme-remaining-item:last-child {
+  border-bottom: none;
+}

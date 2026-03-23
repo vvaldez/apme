@@ -255,7 +255,7 @@ def test_new_scan_start_disabled_without_files(new_scan_page: Page) -> None:
 
 
 def test_new_scan_advanced_options(new_scan_page: Page) -> None:
-    """Advanced Options panel expands to show version and collections inputs.
+    """Advanced Options panel expands to show version, collections, and AI toggle.
 
     Args:
         new_scan_page: Page positioned on /new-scan.
@@ -263,6 +263,13 @@ def test_new_scan_advanced_options(new_scan_page: Page) -> None:
     new_scan_page.click("text=Advanced Options")
     expect(new_scan_page.locator("#ansible-version")).to_be_visible()
     expect(new_scan_page.locator("#collections")).to_be_visible()
+
+    ai_label = new_scan_page.locator(".apme-checkbox-label")
+    expect(ai_label).to_be_visible()
+    expect(ai_label).to_contain_text("AI-assisted remediation")
+
+    ai_checkbox = ai_label.locator("input[type='checkbox']")
+    expect(ai_checkbox).to_be_checked()
 
 
 def test_new_scan_file_upload_enables_start(new_scan_page: Page) -> None:

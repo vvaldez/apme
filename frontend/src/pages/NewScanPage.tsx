@@ -1,35 +1,41 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import JSZip from "jszip";
 import {
-  useScanStream,
+  useSessionStream,
+  type Patch,
+  type Proposal,
+  type SessionStatus,
   type ProgressEntry,
-  type ScanStatus,
-} from "../hooks/useScanStream";
+  type Tier1Result,
+  type SessionResult,
+} from "../hooks/useSessionStream";
 
 type TabId = "upload" | "project";
 
 export function NewScanPage() {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabId>("upload");
   const [files, setFiles] = useState<File[]>([]);
   const [ansibleVersion, setAnsibleVersion] = useState("");
   const [collections, setCollections] = useState("");
+  const [enableAi, setEnableAi] = useState(true);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
 
-  const { status, progress, result, error, startScan, cancel, reset } =
-    useScanStream();
-
-  useEffect(() => {
-    if (result) {
-      const timer = setTimeout(
-        () => navigate(`/scans/${result.scan_id}`),
-        1500,
-      );
-      return () => clearTimeout(timer);
-    }
-  }, [result, navigate]);
+  const {
+    status,
+    progress,
+    scanId,
+    tier1,
+    proposals,
+    result,
+    error,
+    startSession,
+    approve,
+    cancel,
+    reset,
+  } = useSessionStream();
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -57,15 +63,27 @@ export function NewScanPage() {
 
   const handleSubmit = useCallback(() => {
     if (files.length === 0) return;
-    startScan(files, { ansibleVersion, collections });
-  }, [files, ansibleVersion, collections, startScan]);
+    const colls = collections
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    startSession(files, {
+      ansibleVersion,
+      collections: colls.length ? colls : undefined,
+      enableAi,
+    });
+  }, [files, ansibleVersion, collections, enableAi, startSession]);
 
   const handleReset = useCallback(() => {
     reset();
     setFiles([]);
   }, [reset]);
 
-  const isRunning = status === "uploading" || status === "scanning";
+  const isRunning =
+    status === "connecting" ||
+    status === "uploading" ||
+    status === "scanning" ||
+    status === "applying";
 
   return (
     <>
@@ -77,7 +95,7 @@ export function NewScanPage() {
         <button
           className={`apme-tab ${activeTab === "upload" ? "active" : ""}`}
           onClick={() => setActiveTab("upload")}
-          disabled={isRunning}
+          disabled={status !== "idle"}
         >
           Upload Files
         </button>
@@ -90,6 +108,7 @@ export function NewScanPage() {
         </button>
       </div>
 
+      {/* ── File upload form ────────────────────────────────────── */}
       {activeTab === "upload" && status === "idle" && (
         <div className="apme-scan-form">
           <div
@@ -186,6 +205,16 @@ export function NewScanPage() {
                 onChange={(e) => setCollections(e.target.value)}
               />
             </div>
+            <div className="apme-form-group">
+              <label className="apme-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={enableAi}
+                  onChange={(e) => setEnableAi(e.target.checked)}
+                />
+                Enable AI-assisted remediation (Tier 2)
+              </label>
+            </div>
           </details>
 
           <button
@@ -198,25 +227,44 @@ export function NewScanPage() {
         </div>
       )}
 
-      {isRunning && <ScanProgress status={status} progress={progress} onCancel={cancel} />}
+      {/* ── Progress ────────────────────────────────────────────── */}
+      {isRunning && (
+        <ScanProgress status={status} progress={progress} onCancel={cancel} />
+      )}
 
-      {status === "done" && result && (
+      {/* ── Tier 1 results ──────────────────────────────────────── */}
+      {status === "tier1_done" && tier1 && (
+        <Tier1Results tier1={tier1} />
+      )}
+
+      {/* ── AI proposals for approval ──────────────────────────── */}
+      {status === "awaiting_approval" && proposals.length > 0 && (
+        <>
+          {tier1 && <Tier1Results tier1={tier1} />}
+          <ProposalApproval proposals={proposals} onApprove={approve} />
+        </>
+      )}
+
+      {/* ── Final result ────────────────────────────────────────── */}
+      {status === "complete" && result && (
+        <SessionComplete result={result} scanId={scanId} tier1={tier1} />
+      )}
+      {status === "complete" && !result && (
         <div className="apme-scan-complete">
           <div className="apme-complete-icon">&#10003;</div>
-          <h2>Scan Complete</h2>
-          <p>
-            Found <strong>{result.total_violations}</strong> violation
-            {result.total_violations !== 1 ? "s" : ""}
-          </p>
-          <p className="apme-redirect-hint">
-            Redirecting to results...
-          </p>
+          <h2>Session Complete</h2>
+          {scanId && (
+            <Link to={`/scans/${scanId}`} className="apme-link">
+              View scan details
+            </Link>
+          )}
         </div>
       )}
 
+      {/* ── Error ───────────────────────────────────────────────── */}
       {status === "error" && (
         <div className="apme-scan-error">
-          <h2>Scan Failed</h2>
+          <h2>Session Failed</h2>
           <p className="apme-error-message">{error}</p>
           <button className="apme-btn-primary" onClick={handleReset}>
             Try Again
@@ -227,12 +275,14 @@ export function NewScanPage() {
   );
 }
 
+// ── Sub-components ─────────────────────────────────────────────────
+
 function ScanProgress({
   status,
   progress,
   onCancel,
 }: {
-  status: ScanStatus;
+  status: SessionStatus;
   progress: ProgressEntry[];
   onCancel: () => void;
 }) {
@@ -242,12 +292,19 @@ function ScanProgress({
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [progress.length]);
 
+  const label =
+    status === "connecting"
+      ? "Connecting..."
+      : status === "uploading"
+        ? "Uploading files..."
+        : status === "applying"
+          ? "Applying approved fixes..."
+          : "Scanning...";
+
   return (
     <div className="apme-scan-progress">
       <div className="apme-progress-header">
-        <h2>
-          {status === "uploading" ? "Uploading files..." : "Scanning..."}
-        </h2>
+        <h2>{label}</h2>
         <button className="apme-btn-secondary" onClick={onCancel}>
           Cancel
         </button>
@@ -264,6 +321,393 @@ function ScanProgress({
         ))}
         <div ref={endRef} />
       </div>
+    </div>
+  );
+}
+
+function Tier1Results({ tier1 }: { tier1: Tier1Result }) {
+  const patchCount = tier1.patches.length;
+  const formatCount = tier1.format_diffs.length;
+  const [expanded, setExpanded] = useState(false);
+
+  if (patchCount === 0 && formatCount === 0) return null;
+
+  return (
+    <div className="apme-tier1-results">
+      <div className="apme-tier1-header">
+        <span className="apme-badge passed">Auto-Fix</span>
+        <h3>
+          Tier 1 — {patchCount} fix{patchCount !== 1 ? "es" : ""} applied
+          {formatCount > 0 && `, ${formatCount} formatted`}
+        </h3>
+        <button
+          className="apme-btn-secondary"
+          onClick={() => setExpanded(!expanded)}
+          style={{ marginLeft: "auto", fontSize: 12, padding: "4px 10px" }}
+        >
+          {expanded ? "Collapse" : "Show Diffs"}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="apme-tier1-diffs">
+          {tier1.patches.map((p, i) => (
+            <div key={i} className="apme-diff-block">
+              <div className="apme-diff-file">
+                <span className="apme-file-name">{p.file}</span>
+                {p.applied_rules.length > 0 && (
+                  <span className="apme-diff-rules">
+                    {p.applied_rules.join(", ")}
+                  </span>
+                )}
+              </div>
+              {p.diff && <pre className="apme-diff-content">{p.diff}</pre>}
+            </div>
+          ))}
+          {tier1.format_diffs.map((d, i) => (
+            <div key={`fmt-${i}`} className="apme-diff-block">
+              <div className="apme-diff-file">
+                <span className="apme-file-name">{d.file}</span>
+                <span className="apme-badge running" style={{ fontSize: 10 }}>
+                  format
+                </span>
+              </div>
+              {d.diff && <pre className="apme-diff-content">{d.diff}</pre>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProposalApproval({
+  proposals,
+  onApprove,
+}: {
+  proposals: Proposal[];
+  onApprove: (ids: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  const toggleAll = useCallback(() => {
+    setSelected((prev) =>
+      prev.size === proposals.length
+        ? new Set()
+        : new Set(proposals.map((p) => p.id)),
+    );
+  }, [proposals]);
+
+  const toggle = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSubmit = useCallback(() => {
+    onApprove(Array.from(selected));
+  }, [selected, onApprove]);
+
+  const allSelected = selected.size === proposals.length;
+
+  return (
+    <div className="apme-proposals-section">
+      <div className="apme-proposals-header">
+        <div>
+          <span className="apme-badge" style={{ background: "rgba(212, 168, 67, 0.2)", color: "var(--apme-sev-medium)" }}>
+            AI Review
+          </span>
+          <h3>
+            {proposals.length} AI Proposal{proposals.length !== 1 ? "s" : ""}
+          </h3>
+          <p className="apme-proposals-hint">
+            Review each proposed change and select which to apply.
+          </p>
+        </div>
+        <div className="apme-proposals-actions">
+          <button className="apme-btn-secondary" onClick={toggleAll}>
+            {allSelected ? "Deselect All" : "Select All"}
+          </button>
+          <button className="apme-btn-primary" onClick={handleSubmit}>
+            Apply {selected.size} Selected
+          </button>
+        </div>
+      </div>
+
+      <div className="apme-proposals-list">
+        {proposals.map((p) => (
+          <ProposalCard
+            key={p.id}
+            proposal={p}
+            selected={selected.has(p.id)}
+            onToggle={() => toggle(p.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProposalCard({
+  proposal,
+  selected,
+  onToggle,
+}: {
+  proposal: Proposal;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDiff = Boolean(proposal.before_text || proposal.diff_hunk);
+  const confidencePct = Math.round(proposal.confidence * 100);
+
+  return (
+    <div className={`apme-proposal-card ${selected ? "selected" : ""}`}>
+      <div className="apme-proposal-header" onClick={onToggle}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          onClick={(e) => e.stopPropagation()}
+          className="apme-proposal-checkbox"
+        />
+        <div className="apme-proposal-meta">
+          <span className="apme-rule-id">{proposal.rule_id}</span>
+          <span className="apme-proposal-file">
+            {proposal.file}
+            {proposal.line_start > 0 && (
+              <span className="apme-line-number">
+                :{proposal.line_start}
+                {proposal.line_end > proposal.line_start &&
+                  `-${proposal.line_end}`}
+              </span>
+            )}
+          </span>
+          <span className="apme-badge running" style={{ fontSize: 10 }}>
+            Tier {proposal.tier}
+          </span>
+        </div>
+        <div className="apme-proposal-confidence">
+          <div className="apme-confidence-bar">
+            <div
+              className="apme-confidence-fill"
+              style={{
+                width: `${confidencePct}%`,
+                backgroundColor:
+                  confidencePct >= 80
+                    ? "var(--apme-green)"
+                    : confidencePct >= 50
+                      ? "var(--apme-sev-medium)"
+                      : "var(--apme-sev-error)",
+              }}
+            />
+          </div>
+          <span className="apme-confidence-label">{confidencePct}%</span>
+        </div>
+        {hasDiff && (
+          <button
+            className="apme-btn-secondary apme-proposal-expand"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!expanded);
+            }}
+          >
+            {expanded ? "Hide" : "Diff"}
+          </button>
+        )}
+      </div>
+
+      {proposal.explanation && (
+        <div className="apme-proposal-explanation">{proposal.explanation}</div>
+      )}
+
+      {expanded && hasDiff && (
+        <div className="apme-proposal-diff">
+          {proposal.diff_hunk ? (
+            <pre className="apme-diff-content">{proposal.diff_hunk}</pre>
+          ) : (
+            <DiffView
+              before={proposal.before_text}
+              after={proposal.after_text}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiffView({ before, after }: { before: string; after: string }) {
+  const beforeLines = useMemo(() => before.split("\n"), [before]);
+  const afterLines = useMemo(() => after.split("\n"), [after]);
+
+  return (
+    <div className="apme-side-by-side">
+      <div className="apme-diff-pane">
+        <div className="apme-diff-pane-header">Before</div>
+        <pre className="apme-diff-content apme-diff-remove">
+          {beforeLines.map((line, i) => (
+            <span key={i} className="apme-diff-line">
+              <span className="apme-diff-linenum">{i + 1}</span>
+              {line}
+              {"\n"}
+            </span>
+          ))}
+        </pre>
+      </div>
+      <div className="apme-diff-pane">
+        <div className="apme-diff-pane-header">After</div>
+        <pre className="apme-diff-content apme-diff-add">
+          {afterLines.map((line, i) => (
+            <span key={i} className="apme-diff-line">
+              <span className="apme-diff-linenum">{i + 1}</span>
+              {line}
+              {"\n"}
+            </span>
+          ))}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function SessionComplete({
+  result,
+  scanId,
+  tier1,
+}: {
+  result: SessionResult;
+  scanId: string | null;
+  tier1: Tier1Result | null;
+}) {
+  const totalPatches =
+    result.patches.length + (tier1?.patches.length ?? 0);
+  const remaining = result.remaining_violations.length;
+
+  const patchedFiles = useMemo(() => {
+    const byPath = new Map<string, Patch>();
+    for (const p of tier1?.patches ?? []) {
+      if (p.patched) byPath.set(p.file, p);
+    }
+    for (const p of result.patches) {
+      if (p.patched) byPath.set(p.file, p);
+    }
+    return byPath;
+  }, [tier1, result]);
+
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = useCallback(async () => {
+    if (patchedFiles.size === 0) return;
+    setDownloading(true);
+    try {
+      const zip = new JSZip();
+      for (const [path, patch] of patchedFiles) {
+        const bytes = Uint8Array.from(atob(patch.patched!), (c) =>
+          c.charCodeAt(0),
+        );
+        zip.file(path, bytes);
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `apme-fixed-${scanId ?? "files"}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDownloading(false);
+    }
+  }, [patchedFiles, scanId]);
+
+  return (
+    <div className="apme-session-complete">
+      <div className="apme-complete-icon">&#10003;</div>
+      <h2>Session Complete</h2>
+
+      <div className="apme-summary-card" style={{ maxWidth: 600, margin: "16px auto" }}>
+        <div className="apme-summary-counts" style={{ justifyContent: "center", width: "100%" }}>
+          <div className="apme-count-box">
+            <div
+              className="apme-count-box-value"
+              style={{ color: "var(--apme-green)" }}
+            >
+              {totalPatches}
+            </div>
+            <div className="apme-count-box-label">Fixed</div>
+          </div>
+          <div className="apme-count-box">
+            <div
+              className="apme-count-box-value"
+              style={{
+                color:
+                  remaining > 0
+                    ? "var(--apme-sev-medium)"
+                    : "var(--apme-green)",
+              }}
+            >
+              {remaining}
+            </div>
+            <div className="apme-count-box-label">Remaining</div>
+          </div>
+        </div>
+      </div>
+
+      {patchedFiles.size > 0 && (
+        <div style={{ textAlign: "center", margin: "16px auto" }}>
+          <button
+            className="apme-btn-primary"
+            onClick={handleDownload}
+            disabled={downloading}
+          >
+            {downloading
+              ? "Preparing download..."
+              : `Download Fixed Files (${patchedFiles.size})`}
+          </button>
+        </div>
+      )}
+
+      {result.patches.length > 0 && (
+        <details className="apme-options-panel" style={{ maxWidth: 700, margin: "0 auto" }}>
+          <summary>Applied Patches ({result.patches.length})</summary>
+          {result.patches.map((p, i) => (
+            <div key={i} className="apme-diff-block">
+              <div className="apme-diff-file">
+                <span className="apme-file-name">{p.file}</span>
+              </div>
+              {p.diff && <pre className="apme-diff-content">{p.diff}</pre>}
+            </div>
+          ))}
+        </details>
+      )}
+
+      {remaining > 0 && (
+        <details className="apme-options-panel" style={{ maxWidth: 700, margin: "8px auto 0" }}>
+          <summary>Remaining Violations ({remaining})</summary>
+          <div className="apme-remaining-list">
+            {result.remaining_violations.map((v, i) => (
+              <div key={i} className="apme-remaining-item">
+                <span className="apme-rule-id">{v.rule_id}</span>
+                <span className="apme-file-name">{v.file}</span>
+                <span>{v.message}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {scanId && (
+        <div style={{ marginTop: 16, textAlign: "center" }}>
+          <Link to={`/scans/${scanId}`} className="apme-btn-primary" style={{ textDecoration: "none", display: "inline-block" }}>
+            View Full Report
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

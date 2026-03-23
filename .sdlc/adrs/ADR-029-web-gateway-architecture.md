@@ -56,20 +56,19 @@ in SQLite. The engine pods are unmodified.
 
 The gateway distributes the CLI's responsibilities between two processes: the
 gateway (server-side file I/O + gRPC client) and the browser (rendering + user
-interaction). Files never travel over WebSocket.
+interaction).
 
 | CLI Capability | CLI (today) | Web Gateway | Browser |
 |---|---|---|---|
-| File discovery | Client reads `$CWD` | Gateway reads mounted vol or SCM clone | — |
-| File chunking (`ScanChunk`) | Client builds protobuf | Gateway builds protobuf | — |
-| `ScanStream` gRPC | Client call | Gateway call | — |
-| `FixSession` bidi gRPC | Client holds stream | Gateway holds stream | — |
+| File upload | Client reads `$CWD` | Gateway receives base64 files via WS, or reads mounted vol/SCM clone | File picker + WS upload |
+| File chunking (`ScanChunk`) | Client builds protobuf | Gateway builds protobuf from uploaded files | — |
+| `FixSession` bidi gRPC | Client holds stream | Gateway holds stream (unified scan + fix) | — |
 | `FormatStream` gRPC | Client call | Gateway call | — |
 | `Health` gRPC | Client call | Gateway call | — |
 | Write patched files | Client writes to disk | Gateway writes to disk | — |
-| Progress rendering | Terminal (stdout) | WebSocket relay | UI status line |
+| Progress rendering | Terminal (stdout) | WebSocket relay | UI progress timeline |
 | Violation display | Terminal table | REST API + SQLite | Filterable table |
-| HITL review (proposals) | Interactive terminal | WebSocket relay | Diff viewer |
+| HITL review (proposals) | Interactive terminal | WebSocket relay | Diff viewer with approve/reject |
 | Approval decisions | Keyboard input | WebSocket relay | Accept/Reject buttons |
 | Diagnostics (`-v`/`-vv`) | Terminal | REST API | Charts, cards |
 | `--json` output | stdout | REST JSON response | — |
@@ -140,46 +139,61 @@ For the reverse direction (ADR-020 `ScanCompleted` events), engine pods push
 events to the gateway's reporting endpoint. Each engine pod gets
 `APME_REPORTING_ENDPOINT` pointing at the gateway.
 
-### WebSocket-to-FixSession Mapping
+### WebSocket Session Protocol
 
 Each browser session maps 1:1 to a server-side `FixSession` bidi gRPC stream
-(ADR-028). The gateway translates between WebSocket JSON messages and protobuf
+(ADR-028). A single WebSocket endpoint (`WS /api/v1/ws/session`) handles the
+full scan + fix lifecycle: file upload, real-time progress, Tier 1 auto-fix
+results, AI proposal delivery, interactive approval, and final results.
+
+The gateway translates between WebSocket JSON messages and protobuf
 `SessionCommand`/`SessionEvent` messages:
 
 | Direction | WebSocket (JSON) | gRPC (protobuf) |
 |---|---|---|
-| Client → Server | `{"type": "approve", "ids": [...]}` | `SessionCommand.approve` |
+| Client → Server | `{"type": "start", "options": {...}}` | — (gateway-internal) |
+| Client → Server | `{"type": "file", "path": "...", "content": "<base64>"}` | `SessionCommand.upload` (ScanChunk) |
+| Client → Server | `{"type": "files_done"}` | Last `ScanChunk` with `last=true` |
+| Client → Server | `{"type": "approve", "approved_ids": [...]}` | `SessionCommand.approve` |
 | Client → Server | `{"type": "extend"}` | `SessionCommand.extend` |
 | Client → Server | `{"type": "close"}` | `SessionCommand.close` |
-| Client → Server | `{"type": "resume", "session_id": "..."}` | `SessionCommand.resume` |
-| Server → Client | `{"type": "progress", "message": "..."}` | `SessionEvent.progress` |
-| Server → Client | `{"type": "proposals", "items": [...]}` | `SessionEvent.proposals` |
-| Server → Client | `{"type": "tier1_summary", ...}` | `SessionEvent.tier1_summary` |
-| Server → Client | `{"type": "result", "patches": [...]}` | `SessionEvent.result` |
-| Server → Client | `{"type": "expiration_warning", ...}` | `SessionEvent.expiration_warning` |
+| Server → Client | `{"type": "session_created", ...}` | `SessionEvent.created` |
+| Server → Client | `{"type": "progress", ...}` | `SessionEvent.progress` |
+| Server → Client | `{"type": "tier1_complete", ...}` | `SessionEvent.tier1_complete` |
+| Server → Client | `{"type": "proposals", ...}` | `SessionEvent.proposals` |
+| Server → Client | `{"type": "approval_ack", ...}` | `SessionEvent.approval_ack` |
+| Server → Client | `{"type": "result", ...}` | `SessionEvent.result` |
+| Server → Client | `{"type": "expiring", ...}` | `SessionEvent.expiring` |
+| Server → Client | `{"type": "closed"}` | `SessionEvent.closed` |
 
-The gateway manages the gRPC stream lifecycle: opens on WebSocket connect,
-closes on WebSocket disconnect or explicit close command, and handles
-reconnection via `SessionCommand.resume`.
+The gateway manages the gRPC stream lifecycle: collects uploaded files into a
+temp directory, constructs `ScanChunk` protobuf messages, opens the
+`FixSession` gRPC stream, and forwards events bidirectionally. The connection
+closes on WebSocket disconnect or explicit close command.
 
 ### File Ingestion Paths
 
-Files flow server-side only. The browser submits a target (URL or path); the
-gateway handles all file I/O:
+Three file ingestion paths are supported, each ending with the gateway
+constructing `ScanChunk` protobuf messages and streaming them to Primary:
 
-**Path 1 — SCM ingestion**: User submits a repository URL (+ optional PAT).
+**Path 1 — Browser upload**: User uploads files via the WebSocket session.
+Files are sent as base64-encoded JSON messages, written to a temp directory on
+the gateway, then chunked into `ScanChunk` messages. This is the primary path
+for the operator UI. Files are small (Ansible YAML content), so base64 overhead
+is negligible.
+
+**Path 2 — SCM ingestion**: User submits a repository URL (+ optional PAT).
 The gateway clones the repo via direct `git clone` into a temp directory (or
 via `CacheMaintainer.CloneOrg` for org-level batch operations), runs
 APME-specific file discovery, reads files, and streams `ScanChunk` messages
 to Primary. For single-repo URLs, `git clone` is the primary mechanism;
 `CloneOrg` is used when scanning entire GitHub/GitLab organizations.
 
-**Path 2 — Local directory**: User submits a filesystem path (e.g.,
+**Path 3 — Local directory**: User submits a filesystem path (e.g.,
 `/workspace/my-project`). The gateway reads files from a mounted volume, applies
 file discovery, and streams `ScanChunk` messages to Primary.
 
-In both cases the gateway owns the entire clone → discover → chunk → gRPC
-pipeline. The browser never touches the filesystem.
+In all cases the gateway owns the entire file → chunk → gRPC pipeline.
 
 ### Persistence
 
@@ -210,22 +224,22 @@ running the pod is the only user.
 Gateway (`X-User`, `X-Org`, etc.). AAP Gateway handles OAuth2/OIDC, RBAC, and
 session management. The gateway exposes a stateless API.
 
-### REST API
+### REST + WebSocket API
 
-Stateless operations that translate to unary gRPC calls and persist results:
+Read operations are REST endpoints backed by SQLite. The scan + fix lifecycle
+runs over a single WebSocket connection:
 
 ```
-POST   /api/v1/scans                  Initiate scan (path or repo URL)
+WS     /api/v1/ws/session             Unified scan + fix session (upload, progress,
+                                       Tier 1 results, AI proposals, approval)
+
 GET    /api/v1/scans                  List scan history (paginated, filterable)
 GET    /api/v1/scans/{scan_id}        Get scan result
 DELETE /api/v1/scans/{scan_id}        Delete scan record
 
-POST   /api/v1/format                 Format files
 GET    /api/v1/health                 Aggregate health (gateway + backends)
 GET    /api/v1/rules                  List all rules
 GET    /api/v1/rules/{rule_id}        Rule detail
-
-WS     /api/v1/fix                    FixSession WebSocket (HITL flow)
 ```
 
 Full API design in [design-dashboard.md](/.sdlc/context/design-dashboard.md).
@@ -374,3 +388,4 @@ engine pod. It needs:
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-19 | AI Agent | Initial proposal |
+| 2026-03-22 | AI Agent | Replace SSE POST /scans with unified WS /ws/session; update file ingestion paths to include browser upload; expand WS protocol table |

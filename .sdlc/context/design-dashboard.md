@@ -199,48 +199,45 @@ The standalone UI exposes a REST API for the frontend. This API is also usable b
 ### Endpoints
 
 ```
-POST   /api/v1/scans                  Initiate a scan (directory path)
+WS     /api/v1/ws/session             Unified scan + fix session (file upload,
+                                       progress, Tier 1 results, AI proposals,
+                                       approval — all over one connection)
+
 GET    /api/v1/scans                  List scan history (paginated, filterable)
 GET    /api/v1/scans/{scan_id}        Get scan result (violations, diagnostics)
 DELETE /api/v1/scans/{scan_id}        Delete a scan record
-
-POST   /api/v1/format                 Format files (directory path, receive diffs)
 
 GET    /api/v1/health                 Aggregate health (UI + all backend services)
 
 GET    /api/v1/rules                  List all rules
 GET    /api/v1/rules/{rule_id}        Rule detail
-
-POST   /api/v1/fix                    Run fix pipeline
-GET    /api/v1/fix/{job_id}           Get fix job status
-
-GET    /api/v1/remediation/queue      List pending AI proposals
-POST   /api/v1/remediation/{id}/accept    Accept a proposal
-POST   /api/v1/remediation/{id}/reject    Reject a proposal
 ```
 
-### WebSocket-to-FixSession Mapping (HITL Remediation)
+### WebSocket Session Protocol (Unified Scan + Fix)
 
-The remediation queue's real-time approval flow uses a WebSocket connection
-that maps 1:1 to a `FixSession` bidi gRPC stream (ADR-028). The gateway
+A single WebSocket endpoint handles the full scan + fix lifecycle. The
+connection maps 1:1 to a `FixSession` bidi gRPC stream (ADR-028). The gateway
 translates between JSON WebSocket messages and protobuf SessionCommand/Event
 messages:
 
 | Direction | WebSocket (JSON) | gRPC (protobuf) |
 |---|---|---|
-| Client → Server | `{"type": "approve", "ids": [...]}` | `SessionCommand.approve` |
+| Client → Server | `{"type": "start", "options": {...}}` | — (gateway-internal) |
+| Client → Server | `{"type": "file", "path": "...", "content": "<base64>"}` | `SessionCommand.upload` (ScanChunk) |
+| Client → Server | `{"type": "files_done"}` | Last `ScanChunk` with `last=true` |
+| Client → Server | `{"type": "approve", "approved_ids": [...]}` | `SessionCommand.approve` |
 | Client → Server | `{"type": "extend"}` | `SessionCommand.extend` |
 | Client → Server | `{"type": "close"}` | `SessionCommand.close` |
-| Client → Server | `{"type": "resume", "session_id": "..."}` | `SessionCommand.resume` |
+| Server → Client | `{"type": "session_created", ...}` | `SessionEvent.created` |
 | Server → Client | `{"type": "progress", ...}` | `SessionEvent.progress` |
+| Server → Client | `{"type": "tier1_complete", ...}` | `SessionEvent.tier1_complete` |
 | Server → Client | `{"type": "proposals", ...}` | `SessionEvent.proposals` |
-| Server → Client | `{"type": "tier1_summary", ...}` | `SessionEvent.tier1_summary` |
+| Server → Client | `{"type": "approval_ack", ...}` | `SessionEvent.approval_ack` |
 | Server → Client | `{"type": "result", ...}` | `SessionEvent.result` |
-| Server → Client | `{"type": "expiration_warning", ...}` | `SessionEvent.expiration_warning` |
 
-Files flow server-side only — the browser submits a target (repo URL or
-directory path) and the gateway handles clone/read → discover → chunk → gRPC
-stream. WebSocket carries only the HITL event stream.
+Files are uploaded as base64-encoded content within JSON messages. The gateway
+writes them to a temp directory, constructs `ScanChunk` protobuf messages, and
+streams them to Primary over the `FixSession` gRPC stream.
 
 ### No Authentication
 
@@ -366,9 +363,9 @@ containers:
 
 ### Phase 4a: Standalone UI Backend
 
-1. **FastAPI app** — REST API with gRPC client to Primary
+1. **FastAPI app** — REST API + WebSocket with gRPC client to Primary
 2. **SQLite persistence** — scan history, violations, proposals
-3. **POST /api/v1/scans** — initiate scan, store result
+3. **WS /api/v1/ws/session** — unified scan + fix session over WebSocket
 4. **GET /api/v1/scans** — list with pagination/filtering
 5. **Health endpoint** — aggregate backend health
 6. **Dockerfile** — add standalone-ui container to pod
