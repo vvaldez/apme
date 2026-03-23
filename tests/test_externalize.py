@@ -577,3 +577,63 @@ class TestRunExternalize:
 
         assert not (tmp_path / "secrets.yml").exists()
         assert not (tmp_path / "play.externalized.yml").exists()
+
+    def test_relative_secrets_file_path_resolves_to_cwd(self, tmp_path: Path) -> None:
+        """A --secrets-file with directory components is resolved against CWD, not source parent.
+
+        Regression test: previously ``source.parent / 'subdir/secrets.yml'`` produced a
+        double-directory path when source was already inside ``subdir/``.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        import os
+
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        source = subdir / "play.yml"
+        source.write_text(SECRETS_PLAYBOOK)
+
+        # Caller passes "subdir/secrets.yml" relative to CWD (tmp_path).
+        # Expected resolved path: tmp_path / "subdir" / "secrets.yml"  (NOT subdir/subdir/…)
+        rel_secrets = str(subdir / "secrets.yml")
+        args = self._make_args(target=str(source), secrets_file=rel_secrets)
+
+        findings = _make_findings("play.yml", [("generic-api-key", 5, 5)])
+
+        old_cwd = Path.cwd()
+        try:
+            os.chdir(tmp_path)
+            with (
+                patch("apme_engine.cli.externalize._check_gitleaks", return_value=True),
+                patch("apme_engine.cli.externalize.run_gitleaks", return_value=findings),
+            ):
+                run_externalize(args)  # type: ignore[arg-type]
+        finally:
+            os.chdir(old_cwd)
+
+        assert (subdir / "secrets.yml").exists(), "secrets file should be at subdir/secrets.yml"
+        double = subdir / "subdir" / "secrets.yml"
+        assert not double.exists(), "must not double-nest the path"
+
+    def test_secrets_file_parent_dir_created(self, tmp_path: Path) -> None:
+        """Parent directories of --secrets-file are created automatically.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        source = tmp_path / "play.yml"
+        source.write_text(SECRETS_PLAYBOOK)
+        new_dir = tmp_path / "vault" / "nested"
+        secrets_path = new_dir / "creds.yml"
+        args = self._make_args(target=str(source), secrets_file=str(secrets_path))
+
+        findings = _make_findings("play.yml", [("generic-api-key", 5, 5)])
+
+        with (
+            patch("apme_engine.cli.externalize._check_gitleaks", return_value=True),
+            patch("apme_engine.cli.externalize.run_gitleaks", return_value=findings),
+        ):
+            run_externalize(args)  # type: ignore[arg-type]
+
+        assert secrets_path.exists(), "secrets file should be created even when parent dirs are missing"

@@ -250,6 +250,7 @@ def externalize_file(
     secrets_text = _build_secrets_yaml(all_secrets, source.name)
     if secrets_path.exists():
         sys.stderr.write(f"WARNING: {secrets_path} already exists — overwriting.\n")
+    secrets_path.parent.mkdir(parents=True, exist_ok=True)
     secrets_path.write_text(secrets_text)
 
     return ExternalizeResult(
@@ -305,9 +306,17 @@ def run_externalize(args: argparse.Namespace) -> None:
     total_written = 0
 
     for source in files:
-        secrets_path = (
-            Path(secrets_file_arg) if Path(secrets_file_arg).is_absolute() else source.parent / secrets_file_arg
-        )
+        sf = Path(secrets_file_arg)
+        if sf.is_absolute():
+            # Absolute path — use as-is.
+            secrets_path = sf
+        elif sf.parent != Path("."):
+            # Relative path with a directory component (e.g. vault/creds.yml) —
+            # resolve against CWD so the caller's intent is honoured verbatim.
+            secrets_path = sf.resolve()
+        else:
+            # Bare filename (e.g. secrets.yml) — place alongside the source file.
+            secrets_path = source.parent / sf
 
         result = externalize_file(source, secrets_path, dry_run=dry_run)
 
