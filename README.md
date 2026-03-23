@@ -46,6 +46,7 @@ Six app containers, one pod. All inter-service communication is gRPC. The Galaxy
 - **Unified gRPC contract** — every validator implements the same `Validator` service (`validate.proto`); adding a new validator means implementing one RPC.
 - **100+ rules** across four backends: OPA Rego (L002–L025, R118), native Python (L026–L056, R101–R501), Ansible runtime (L057–L059, M001–M004), Gitleaks (SEC:* — 800+ secret patterns).
 - **Secret scanning** — Gitleaks binary wrapped in gRPC; scans all project files for hardcoded credentials, API keys, private keys. Vault-encrypted files and Jinja2 expressions are automatically filtered.
+- **Secret externalization** — `externalize-secrets` subcommand extracts hardcoded credentials from `vars:` blocks into a separate vars file, inserts `vars_files:` into the playbook, and never modifies the source. Vault-ready output with a `--dry-run` mode for safe auditing.
 - **Multi ansible-core version support** — the Primary orchestrator builds session-scoped venvs per ansible-core version (UV-cached); argspec and deprecation checks run against the requested version. Venvs are shared read-only with validators via a `/sessions` volume.
 - **Structured diagnostics** — every validator reports per-rule timing data via the gRPC contract; use `-v` for summaries or `-vv` for full per-rule breakdowns.
 - **Galaxy Proxy** — converts Ansible Galaxy collection tarballs into pip-installable Python wheels (PEP 503/427); collections are `uv pip install`'d into session venvs, leveraging standard Python caching and dependency resolution.
@@ -90,6 +91,15 @@ apme-scan fix --ai --apply /path/to/project
 
 # AI with auto-approve (no interactive review)
 apme-scan fix --ai --auto-approve --apply /path/to/project
+
+# Extract hardcoded secrets to a separate vars file (non-destructive)
+apme-scan externalize-secrets playbook.yml
+
+# Dry-run: audit without writing any files
+apme-scan externalize-secrets --dry-run playbook.yml
+
+# Custom secrets file path
+apme-scan externalize-secrets --secrets-file vault/credentials.yml playbook.yml
 ```
 
 ### Container deployment (Podman)
@@ -183,6 +193,101 @@ APME_ABBENAY_ADDR=localhost:50057 apme-scan fix --ai --apply .
 3. **Interactive review**: accepted proposals are applied (or shown as diffs without `--apply`)
 4. **Tier 3 (manual)**: violations that neither transforms nor AI can fix are reported for human review
 
+## Secret externalization
+
+The `externalize-secrets` subcommand detects hardcoded credentials in Ansible YAML
+files (using Gitleaks) and separates them into a standalone vars file — without
+touching the original. This is the first step toward vault-encrypting or secrets-manager-backed
+credentials.
+
+### How it works
+
+1. Gitleaks scans the source file for hardcoded credentials (AWS keys, GitHub PATs,
+   passwords, private keys, and 800+ other patterns).
+2. Each detected variable is identified by mapping gitleaks line numbers back to the
+   YAML `vars:` block, including multi-line values like PEM keys.
+3. Two output files are written — the original is never modified:
+
+| File | Contents |
+|------|----------|
+| `<name>.externalized.yml` | Playbook with secret vars removed; `vars_files:` inserted |
+| `secrets.yml` (or `--secrets-file`) | Extracted key-value pairs, vault-ready |
+
+### Example
+
+Given `playbook.yml` with hardcoded credentials in `vars:`:
+
+```yaml
+- name: Deploy app
+  hosts: all
+  vars:
+    aws_access_key_id: "AKIA1234567890ABCDEF"
+    db_password: "SuperSecret123!"
+    app_name: "my-app"          # not a secret — stays inline
+  tasks: ...
+```
+
+Running `apme-scan externalize-secrets playbook.yml` produces:
+
+**`playbook.externalized.yml`**
+```yaml
+- name: Deploy app
+  hosts: all
+  vars_files:
+    - secrets.yml
+  vars:
+    app_name: "my-app"
+  tasks: ...
+```
+
+**`secrets.yml`**
+```yaml
+# Externalized secrets — store securely, do not commit to version control
+# Generated from: playbook.yml
+# Consider encrypting this file with: ansible-vault encrypt secrets.yml
+aws_access_key_id: "AKIA1234567890ABCDEF"
+db_password: "SuperSecret123!"
+```
+
+### Usage
+
+```bash
+# Extract secrets from a single playbook
+apme-scan externalize-secrets playbook.yml
+
+# Audit without writing (dry-run)
+apme-scan externalize-secrets --dry-run playbook.yml
+
+# Custom secrets file name/path
+apme-scan externalize-secrets --secrets-file vault/credentials.yml playbook.yml
+
+# Process all YAML files in a directory
+apme-scan externalize-secrets ./roles/my_role/
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `target` | Path to a YAML file or directory (default: `.`) |
+| `--secrets-file FILE` | Filename for extracted secrets (default: `secrets.yml`) |
+| `--dry-run` | Report what would be extracted without writing any files |
+
+### Next steps after externalization
+
+```bash
+# Encrypt the generated secrets file with Ansible Vault
+ansible-vault encrypt secrets.yml
+
+# Or store individual values in a secrets manager and reference via lookup:
+# db_password: "{{ lookup('aws_ssm', '/myapp/db_password') }}"
+```
+
+### Prerequisites
+
+The `gitleaks` binary must be installed and on `PATH`. See the
+[Gitleaks installation guide](https://github.com/gitleaks/gitleaks#installing).
+
 ## Scaling
 
 Scale pods, not services within a pod. Each pod is a self-contained stack that can process a scan request end-to-end. For more throughput, run multiple pods behind a load balancer. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#scaling).
@@ -266,6 +371,7 @@ tests/                  unit, integration, rule doc coverage
 ### Phase 2a — New Rules
 
 - **Secret scanning** (done) — Gitleaks validator: 800+ patterns for credentials, API keys, private keys via dedicated container + gRPC wrapper. Vault and Jinja filtering built in.
+- **Secret externalization** (done) — `externalize-secrets` subcommand: non-destructive extraction of hardcoded credentials into a separate vars file with `vars_files:` stitching. See [ADR-034](.sdlc/adrs/ADR-034-secret-externalization-subcommand.md).
 - **EE compatibility rules** (R505–R507): undeclared collections, system path assumptions, undeclared Python deps. Requires static `ee_baseline.json` from `ee-supported-rhel9` inspection.
 - **Version auto-detection**: infer source Ansible version from playbook signals (short-form module names → ≤2.9, `include:` → ≤2.7, `tower_*` → ≤2.13). Auto-scope M-rules without an explicit `--ansible-core-version` flag.
 
