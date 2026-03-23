@@ -54,7 +54,7 @@ async def _emit_scan_to_sink(
     try:
         await sink.on_scan_completed(event)
     except Exception:
-        logger.warning("Sink %s failed for scan_id=%s", type(sink).__name__, event.scan_id)
+        logger.warning("Sink %s failed for scan_id=%s", type(sink).__name__, event.scan_id, exc_info=True)
 
 
 async def _emit_fix_to_sink(
@@ -64,7 +64,7 @@ async def _emit_fix_to_sink(
     try:
         await sink.on_fix_completed(event)
     except Exception:
-        logger.warning("Sink %s failed for scan_id=%s", type(sink).__name__, event.scan_id)
+        logger.warning("Sink %s failed for scan_id=%s", type(sink).__name__, event.scan_id, exc_info=True)
 
 
 async def emit_scan_completed(event: reporting_pb2.ScanCompletedEvent) -> None:

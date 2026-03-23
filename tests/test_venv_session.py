@@ -11,6 +11,7 @@ from apme_engine.venv_manager.session import VenvSessionManager
 
 _PATCH_CREATE = "apme_engine.venv_manager.session.create_base_venv"
 _PATCH_INSTALL = "apme_engine.venv_manager.session.install_collections_incremental"
+_INSTALL_RETURN: list[str] = []
 
 
 def _fake_create_base_venv(venv_dir: Path, ansible_core_version: str, **_kw: object) -> None:
@@ -61,7 +62,7 @@ def manager(sessions_root: Path) -> VenvSessionManager:
 class TestAcquireColdStart:
     """Tests for first-time venv creation."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_creates_venv_with_version_layout(
         self,
@@ -83,7 +84,7 @@ class TestAcquireColdStart:
         assert session.venv_root == manager.sessions_root / "my-project" / "2.17.0" / "venv"
         mock_create.assert_called_once()
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_installs_collections_on_create(
         self,
@@ -103,7 +104,7 @@ class TestAcquireColdStart:
         mock_install.assert_called_once()
         assert sorted(session.installed_collections) == sorted(specs)
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_no_install_when_no_specs(
         self,
@@ -125,7 +126,7 @@ class TestAcquireColdStart:
 class TestWarmHit:
     """Tests for reusing an existing venv (all collections already installed)."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_reuses_existing_venv(
         self,
@@ -147,7 +148,7 @@ class TestWarmHit:
         assert mock_create.call_count == 1
         mock_install.assert_called_once()
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_warm_hit_updates_last_used(
         self,
@@ -172,7 +173,7 @@ class TestWarmHit:
 class TestIncrementalInstall:
     """Tests for additive collection installs."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_installs_only_delta(
         self,
@@ -197,7 +198,7 @@ class TestIncrementalInstall:
         assert "a.b" not in installed_specs
         assert sorted(session.installed_collections) == ["a.b", "c.d"]
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_no_install_when_subset(
         self,
@@ -222,7 +223,7 @@ class TestIncrementalInstall:
 class TestMultiVersion:
     """Tests for tox-style multi-version coexistence."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_different_versions_coexist(
         self,
@@ -244,7 +245,7 @@ class TestMultiVersion:
         assert s2.venv_root.is_dir()
         assert mock_create.call_count == 2
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_get_specific_version(
         self,
@@ -268,7 +269,7 @@ class TestMultiVersion:
         assert v17.ansible_version == "2.17.0"
         assert v18.ansible_version == "2.18.0"
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_get_most_recent(
         self,
@@ -294,7 +295,7 @@ class TestMultiVersion:
 class TestTTLReaping:
     """Tests for per-version TTL reaping."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_reap_expired_version(
         self,
@@ -317,7 +318,7 @@ class TestTTLReaping:
         assert mgr.get("sid", "2.17") is None
         assert not (sessions_root / "sid").exists()
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_reap_keeps_fresh(
         self,
@@ -337,7 +338,7 @@ class TestTTLReaping:
         assert count == 0
         assert manager.get("sid", "2.17") is not None
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_reap_independent_versions(
         self,
@@ -372,7 +373,7 @@ class TestTTLReaping:
 class TestTouchAndRelease:
     """Tests for touch and release operations."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_touch_updates_all_versions(
         self,
@@ -404,7 +405,7 @@ class TestTouchAndRelease:
         """
         assert manager.touch("nope") is False
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_release_is_noop(
         self,
@@ -427,7 +428,7 @@ class TestTouchAndRelease:
 class TestListAndDelete:
     """Tests for list_sessions and delete."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_list_all_versions(
         self,
@@ -451,7 +452,7 @@ class TestListAndDelete:
         assert len(sessions) == 3
         assert sessions[0].session_id == "b"
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_delete_removes_all_versions(
         self,
@@ -483,7 +484,7 @@ class TestListAndDelete:
 class TestMetadata:
     """Tests for metadata persistence."""
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_version_meta_file(
         self,
@@ -506,7 +507,7 @@ class TestMetadata:
         assert data["ansible_version"] == "2.17.0"
         assert "ansible.posix" in data["installed_collections"]
 
-    @patch(_PATCH_INSTALL)
+    @patch(_PATCH_INSTALL, return_value=_INSTALL_RETURN)
     @patch(_PATCH_CREATE, side_effect=_fake_create_base_venv)
     def test_session_json_exists(
         self,

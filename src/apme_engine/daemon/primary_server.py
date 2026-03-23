@@ -443,8 +443,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             collection_specs,
         )
         venv_path = str(venv_session.venv_root)
+        if venv_session.failed_collections:
+            logger.warning(
+                "Venv: %d collection(s) failed to install (session=%s, req=%s): %s — scan will continue without them",
+                len(venv_session.failed_collections),
+                sid,
+                scan_id,
+                ", ".join(venv_session.failed_collections),
+            )
         logger.info(
-            "Venv: ready (%d collections, session=%s, req=%s)",
+            "Venv: ready (%d collections installed, session=%s, req=%s)",
             len(venv_session.installed_collections),
             sid,
             scan_id,
@@ -645,18 +653,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 all_logs = merge_logs(sink.entries, vlogs)
                 proto_violations = [violation_dict_to_proto(v) for v in violations]
 
-                asyncio.create_task(
-                    emit_scan_completed(
-                        ScanCompletedEvent(
-                            scan_id=scan_id,
-                            session_id=resolved_sid,
-                            project_path=request.project_root,
-                            source="cli",
-                            violations=proto_violations,
-                            diagnostics=diag,
-                            summary=summary,
-                            logs=all_logs,
-                        )
+                await emit_scan_completed(
+                    ScanCompletedEvent(
+                        scan_id=scan_id,
+                        session_id=resolved_sid,
+                        project_path=request.project_root,
+                        source="cli",
+                        violations=proto_violations,
+                        diagnostics=diag,
+                        summary=summary,
+                        logs=all_logs,
                     )
                 )
 
@@ -707,7 +713,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         with attach_stream_sink(queue):
             try:
-                logger.info("Scan: start (%d files, req=%s)", len(all_files), scan_id)
+                logger.info("ScanStream: start (%d files, req=%s)", len(all_files), scan_id)
 
                 if not all_files:
                     yield ScanEvent(result=ScanResponse(scan_id=scan_id, violations=[], logs=[]))
@@ -774,18 +780,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 all_logs = merge_logs(streamed_entries, vlogs)
                 proto_violations = [violation_dict_to_proto(v) for v in violations]
 
-                asyncio.create_task(
-                    emit_scan_completed(
-                        ScanCompletedEvent(
-                            scan_id=scan_id,
-                            session_id=resolved_sid,
-                            project_path=project_root,
-                            source="cli",
-                            violations=proto_violations,
-                            diagnostics=diag,
-                            summary=summary,
-                            logs=all_logs,
-                        )
+                await emit_scan_completed(
+                    ScanCompletedEvent(
+                        scan_id=scan_id,
+                        session_id=resolved_sid,
+                        project_path=project_root,
+                        source="cli",
+                        violations=proto_violations,
+                        diagnostics=diag,
+                        summary=summary,
+                        logs=all_logs,
                     )
                 )
 
@@ -1379,7 +1383,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        asyncio.create_task(emit_fix_completed(self._build_fix_event(session, remaining_violations)))
+        await emit_fix_completed(self._build_fix_event(session, remaining_violations))
 
     @staticmethod
     def _build_fix_event(

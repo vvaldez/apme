@@ -2,33 +2,38 @@
 
 ## Overview
 
-APME is a six-container gRPC microservice deployed as a single Podman pod. The Primary service runs the engine (parse + annotate), then fans validation out **in parallel** to four independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
+APME is an eight-container microservice deployed as a single Podman pod. The Primary service runs the engine (parse + annotate), then fans validation out **in parallel** to four independent validator backends over a unified gRPC contract. The Gateway provides a REST API and gRPC Reporting service for the React UI. The CLI is ephemeral — run on-the-fly with the project directory mounted.
 
-All inter-service communication is gRPC. There is no REST, no message queue, no service discovery. Containers in the same pod share `localhost`; addresses are fixed by convention.
+All inter-service communication is gRPC. The Gateway additionally exposes a REST API for the UI. There is no message queue, no service discovery. Containers in the same pod share `localhost`; addresses are fixed by convention.
 
 All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, subprocess calls, CPU-bound rules) is dispatched via `asyncio.get_event_loop().run_in_executor()`. Each request carries a **`request_id`** (correlation ID) from Primary through every validator for end-to-end tracing.
 
 ## Container topology
 
 ```
-┌──────────────────────────── apme-pod ─────────────────────────────┐
-│                                                                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │  │
-│  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │  │
-│  │          │  │          │  │          │  │          │  │          │  │
-│  │ engine + │  │ Python   │  │ OPA bin  │  │ ansible- │  │ gitleaks │  │
-│  │ orchestr │  │ rules on │  │ + gRPC   │  │ core     │  │ + gRPC   │  │
-│  │ session  │  │ scandata │  │ wrapper  │  │ venvs    │  │ wrapper  │  │
-│  │  venvs   │  │          │  │          │  │ (ro)     │  │          │  │
-│  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
-│       │                                                                │
+┌────────────────────────────── apme-pod ───────────────────────────────┐
+│                                                                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
+│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │ │
+│  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │ │
+│  │          │  │          │  │          │  │          │  │          │ │
+│  │ engine + │  │ Python   │  │ OPA bin  │  │ ansible- │  │ gitleaks │ │
+│  │ orchestr │  │ rules on │  │ + gRPC   │  │ core     │  │ + gRPC   │ │
+│  │ session  │  │ scandata │  │ wrapper  │  │ venvs    │  │ wrapper  │ │
+│  │  venvs   │  │          │  │          │  │ (ro)     │  │          │ │
+│  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘ │
+│       │                                                               │
 │  ┌────┴─────────────────────────────────────┐                         │
-│  │      Galaxy Proxy :8765 (PEP 503)       │                         │
-│  │  Ansible Galaxy → Python wheels on      │                         │
-│  │  demand; caching handled by proxy + uv  │                         │
+│  │      Galaxy Proxy :8765 (PEP 503)        │                         │
 │  └──────────────────────────────────────────┘                         │
-└──────────────────────────────────────────────────────────────────────┘
+│                                                                       │
+│  ┌──────────────────┐  ┌──────────────────┐                           │
+│  │ Gateway :8080    │  │ UI :8081 (nginx) │                           │
+│  │ REST API +       │◄─┤ React SPA        │                           │
+│  │ gRPC Reporting   │  │ /api/ → Gateway  │                           │
+│  │ :50060 (SQLite)  │  │                  │                           │
+│  └──────────────────┘  └──────────────────┘                           │
+└───────────────────────────────────────────────────────────────────────┘
 
      ┌──────────┐
      │   CLI    │  podman run --rm --pod apme-pod
@@ -41,13 +46,15 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 
 | Service | Image | Port | Role |
 |---------|-------|------|------|
-| **Primary** | `apme-primary` | 50051 | Runs the engine (parse → annotate → hierarchy); manages session-scoped venvs (`VenvSessionManager`); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and returns violations |
+| **Primary** | `apme-primary` | 50051 | Runs the engine (parse → annotate → hierarchy); manages session-scoped venvs (`VenvSessionManager`); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and returns violations. Pushes `ScanCompletedEvent`/`FixCompletedEvent` to the Gateway via gRPC. |
 | **Native** | `apme-native` | 50055 | Python rules operating on deserialized `scandata` (the full in-memory model). Rules L026–L060, M005/M010, P001–P004, R101–R501 |
 | **OPA** | `apme-opa` | 50054 | OPA binary (REST on 8181 internally) + Python gRPC wrapper. Rego rules L003–L025, M006/M008/M009/M011, R118 on the hierarchy JSON |
 | **Ansible** | `apme-ansible` | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
 | **Gitleaks** | `apme-gitleaks` | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
 | **Galaxy Proxy** | `apme-galaxy-proxy` | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
-| **CLI** | `apme-cli` | — | Ephemeral. Reads project files, builds chunked `ScanRequest`, calls `Primary.Scan`, prints violations. Run with `--pod apme-pod` and CWD mounted |
+| **Gateway** | `apme-gateway` | 8080 / 50060 | Dual-protocol: FastAPI REST API (:8080) for the UI and a gRPC Reporting service (:50060) that receives `ScanCompletedEvent`/`FixCompletedEvent` from Primary. Persists scan history to SQLite. Health endpoint probes all upstream services. |
+| **UI** | `apme-ui` | 8081 | React SPA served by nginx. Proxies `/api/` to the Gateway at `127.0.0.1:8080`. Displays scan history, violations, sessions, and system health. |
+| **CLI** | `apme-cli` | — | Ephemeral. Reads project files, builds chunked `ScanRequest`, calls `Primary.ScanStream`, prints violations. Run with `--pod apme-pod` and CWD mounted |
 
 ## gRPC service contracts
 
@@ -200,6 +207,9 @@ The wrapper adds Ansible-aware filtering:
 | 50054 | OPA | gRPC (wrapper; OPA REST on 8181 internal) |
 | 50055 | Native | gRPC |
 | 50056 | Gitleaks | gRPC (wrapper; gitleaks binary for detection) |
+| 50060 | Gateway | gRPC (Reporting service) |
+| 8080 | Gateway | HTTP (REST API for UI) |
+| 8081 | UI | HTTP (nginx; proxies /api/ to Gateway) |
 | 8765 | Galaxy Proxy | HTTP (PEP 503 simple repository API) |
 
 ## Scaling

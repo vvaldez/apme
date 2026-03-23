@@ -92,7 +92,14 @@ export interface PaginatedResponse<T> {
   items: T[];
 }
 
+export interface ComponentHealth {
+  name: string;
+  status: string;
+  address: string;
+}
+
 export interface HealthStatus {
   status: string;
   database: string;
+  components: ComponentHealth[];
 }

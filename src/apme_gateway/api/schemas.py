@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SessionSummary(BaseModel):  # type: ignore[misc]
@@ -245,13 +245,29 @@ class PaginatedResponse(BaseModel):  # type: ignore[misc]
     items: list[SessionSummary] | list[ScanSummary] | list[TopViolation]
 
 
+class ComponentHealth(BaseModel):  # type: ignore[misc]
+    """Health status for a single service component.
+
+    Attributes:
+        name: Human-readable component name.
+        status: Health status (ok, unavailable, or degraded).
+        address: Network address of the component.
+    """
+
+    name: str
+    status: str
+    address: str
+
+
 class HealthStatus(BaseModel):  # type: ignore[misc]
     """Gateway health response.
 
     Attributes:
         status: Overall health (ok or degraded).
         database: Database connectivity status.
+        components: Health status of each upstream service.
     """
 
     status: str
     database: str
+    components: list[ComponentHealth] = Field(default_factory=list)

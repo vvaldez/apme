@@ -144,26 +144,23 @@ def _spec_to_pip(spec: str) -> str:
     return pkg
 
 
-def _install_collections_via_proxy(
+def _run_pip_install(
     pip_python: Path,
-    collection_specs: list[str],
-    proxy_url: str,
+    pip_specs: list[str],
+    simple_url: str,
     use_uv: bool,
-) -> None:
-    """Install collections into the venv via the galaxy proxy (PEP 503).
+) -> subprocess.CompletedProcess[str]:
+    """Run a single pip/uv install command and return the result.
 
     Args:
         pip_python: Python interpreter inside the venv.
-        collection_specs: Collection specifiers to install.
-        proxy_url: Base URL of the galaxy proxy.
+        pip_specs: Pip package specifiers to install.
+        simple_url: PEP 503 simple index URL.
         use_uv: Whether to use uv for installation.
 
-    Raises:
-        subprocess.CalledProcessError: When the pip/uv install command fails.
+    Returns:
+        CompletedProcess with stdout/stderr captured.
     """
-    simple_url = proxy_url.rstrip("/") + "/simple/"
-    pip_specs = [_spec_to_pip(s) for s in collection_specs]
-
     if use_uv:
         cmd = [
             "uv",
@@ -185,11 +182,57 @@ def _install_collections_via_proxy(
             simple_url,
             *pip_specs,
         ]
+    return subprocess.run(cmd, capture_output=True, text=True)
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.warning("Proxy collection install failed: %s", result.stderr or result.stdout)
-        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+
+def _install_collections_via_proxy(
+    pip_python: Path,
+    collection_specs: list[str],
+    proxy_url: str,
+    use_uv: bool,
+) -> list[str]:
+    """Install collections into the venv via the galaxy proxy (PEP 503).
+
+    Attempts a bulk install first.  On failure, falls back to installing
+    each collection individually so that one broken collection does not
+    block all others.
+
+    Args:
+        pip_python: Python interpreter inside the venv.
+        collection_specs: Collection specifiers to install.
+        proxy_url: Base URL of the galaxy proxy.
+        use_uv: Whether to use uv for installation.
+
+    Returns:
+        List of collection specs that failed to install (empty on full success).
+    """
+    simple_url = proxy_url.rstrip("/") + "/simple/"
+    pip_specs = [_spec_to_pip(s) for s in collection_specs]
+
+    result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv)
+    if result.returncode == 0:
+        return []
+
+    logger.warning(
+        "Bulk collection install failed, falling back to individual installs: %s",
+        result.stderr or result.stdout,
+    )
+
+    failed: list[str] = []
+    for spec in collection_specs:
+        pip_spec = _spec_to_pip(spec)
+        individual = _run_pip_install(pip_python, [pip_spec], simple_url, use_uv)
+        if individual.returncode != 0:
+            logger.warning(
+                "Collection install failed for %s: %s",
+                spec,
+                individual.stderr or individual.stdout,
+            )
+            failed.append(spec)
+        else:
+            logger.info("Collection installed successfully: %s", spec)
+
+    return failed
 
 
 def create_base_venv(
@@ -236,22 +279,29 @@ def create_base_venv(
 def install_collections_incremental(
     venv_dir: Path,
     collection_specs: list[str],
-) -> None:
+) -> list[str]:
     """Install collections into an existing venv via the galaxy proxy.
 
     Uses ``APME_GALAXY_PROXY_URL`` to install collections as pip packages
     through the proxy's PEP 503 simple index.  Safe to call repeatedly
     with overlapping specs — already-installed packages are no-ops.
 
+    Individual collection failures are non-fatal: the scan continues with
+    whatever collections could be installed.  Failed specs are returned
+    so callers can report them.
+
     Args:
         venv_dir: Root of the virtualenv (must already exist with ansible-core).
         collection_specs: Collection specifiers to install.
+
+    Returns:
+        List of collection specs that failed to install (empty on full success).
 
     Raises:
         RuntimeError: If APME_GALAXY_PROXY_URL is not configured.
     """
     if not collection_specs:
-        return
+        return []
 
     proxy = _proxy_url()
     if not proxy:
@@ -261,7 +311,7 @@ def install_collections_incremental(
 
     pip_python = get_venv_python(venv_dir)
     use_uv = _uv_available()
-    _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+    return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
 
 
 _DEFAULT_TTL = 3600
@@ -314,6 +364,7 @@ class VenvSession:
         venv_root: Path to the venv directory.
         ansible_version: Normalised ansible-core version installed.
         installed_collections: Collection specifiers actually present in the venv.
+        failed_collections: Collection specifiers that could not be installed.
         created_at: Unix timestamp of venv creation.
         last_used_at: Unix timestamp of last acquire / touch.
     """
@@ -322,6 +373,7 @@ class VenvSession:
     venv_root: Path
     ansible_version: str
     installed_collections: list[str] = field(default_factory=list)
+    failed_collections: list[str] = field(default_factory=list)
     created_at: float = 0.0
     last_used_at: float = 0.0
 
@@ -367,6 +419,11 @@ class VenvSessionManager:
         If a venv for ``(session_id, ansible_version)`` exists and already
         contains all requested collections, it is reused instantly (warm hit).
         Otherwise only the *delta* (new collections) is installed.
+
+        Individual collection install failures are non-fatal — the session
+        records only successfully installed collections and logs warnings
+        for any that failed.  The ``failed_collections`` attribute lists
+        specs that could not be installed.
 
         New core versions create sibling venvs under the same session
         directory — existing ones are never destroyed.
@@ -415,16 +472,27 @@ class VenvSessionManager:
                         return existing
 
                     logger.debug("Venv: installing %d missing collections", len(missing))
-                    install_collections_incremental(venv_dir, sorted(missing))
-                    existing.installed_collections = sorted(installed | set(specs))
+                    failed = install_collections_incremental(venv_dir, sorted(missing))
+                    succeeded = set(specs) - set(failed)
+                    existing.installed_collections = sorted(installed | succeeded)
+                    existing.failed_collections = sorted(failed)
                     existing.last_used_at = time.time()
                     self._write_version_meta(meta_path, existing)
                     dur = (time.monotonic() - t0) * 1000
-                    logger.info(
-                        "Venv: ready (%.0fms, incremental, %d collections)",
-                        dur,
-                        len(existing.installed_collections),
-                    )
+                    if failed:
+                        logger.warning(
+                            "Venv: ready with warnings (%.0fms, %d collections installed, %d failed: %s)",
+                            dur,
+                            len(existing.installed_collections),
+                            len(failed),
+                            ", ".join(failed),
+                        )
+                    else:
+                        logger.info(
+                            "Venv: ready (%.0fms, incremental, %d collections)",
+                            dur,
+                            len(existing.installed_collections),
+                        )
                     return existing
 
                 version_dir.mkdir(parents=True, exist_ok=True)
@@ -433,26 +501,38 @@ class VenvSessionManager:
 
                 logger.info("Venv: cold start — creating venv core=%s", pip_version)
                 create_base_venv(venv_dir, pip_version)
+                failed = []
                 if specs:
                     logger.debug("Venv: installing %d collections", len(specs))
-                    install_collections_incremental(venv_dir, specs)
+                    failed = install_collections_incremental(venv_dir, specs)
 
+                succeeded_specs = sorted(set(specs) - set(failed))
                 now = time.time()
                 session = VenvSession(
                     session_id=session_id,
                     venv_root=venv_dir,
                     ansible_version=pip_version,
-                    installed_collections=sorted(specs),
+                    installed_collections=succeeded_specs,
+                    failed_collections=sorted(failed),
                     created_at=now,
                     last_used_at=now,
                 )
                 self._write_version_meta(meta_path, session)
                 dur = (time.monotonic() - t0) * 1000
-                logger.info(
-                    "Venv: ready (%.0fms, cold start, %d collections)",
-                    dur,
-                    len(specs),
-                )
+                if failed:
+                    logger.warning(
+                        "Venv: ready with warnings (%.0fms, cold start, %d collections installed, %d failed: %s)",
+                        dur,
+                        len(succeeded_specs),
+                        len(failed),
+                        ", ".join(failed),
+                    )
+                else:
+                    logger.info(
+                        "Venv: ready (%.0fms, cold start, %d collections)",
+                        dur,
+                        len(succeeded_specs),
+                    )
                 return session
             finally:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -643,6 +723,7 @@ class VenvSessionManager:
                 venv_root=Path(data["venv_root"]),
                 ansible_version=data["ansible_version"],
                 installed_collections=data.get("installed_collections", []),
+                failed_collections=data.get("failed_collections", []),
                 created_at=data.get("created_at", 0.0),
                 last_used_at=data.get("last_used_at", 0.0),
             )

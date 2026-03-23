@@ -18,7 +18,7 @@ From the repo root:
 ./containers/podman/build.sh
 ```
 
-This builds seven images:
+This builds nine images:
 
 | Image | Dockerfile | Purpose |
 |-------|------------|---------|
@@ -28,6 +28,8 @@ This builds seven images:
 | `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator (reads session venvs) |
 | `apme-gitleaks:latest` | `containers/gitleaks/Dockerfile` | Gitleaks secret scanner + gRPC wrapper |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite) |
+| `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 
 ### Start the pod
@@ -92,6 +94,7 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks) with la
 | `OPA_GRPC_ADDRESS` | — | OPA validator address (e.g., `127.0.0.1:50054`) |
 | `ANSIBLE_GRPC_ADDRESS` | — | Ansible validator address (e.g., `127.0.0.1:50053`) |
 | `GITLEAKS_GRPC_ADDRESS` | — | Gitleaks validator address (e.g., `127.0.0.1:50056`) |
+| `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each scan/fix. |
 
 If a validator address is unset, that validator is skipped during fan-out.
 
@@ -121,11 +124,25 @@ The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to 
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
 
+#### Gateway
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database |
+| `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
+| `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
+| `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
+
+#### UI
+
+The UI container has no environment variables. It serves the React SPA via nginx and proxies `/api/` requests to the Gateway at `127.0.0.1:8080` (same pod network namespace).
+
 ### Volumes
 
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
 | `sessions` | `apme-sessions/` | `/sessions` | Primary, Ansible | rw (primary), ro (ansible) |
+| `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 
 ## OPA container details
@@ -193,6 +210,9 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
 | 50056 | Gitleaks | `APME_GITLEAKS_VALIDATOR_LISTEN` |
+| 50060 | Gateway (gRPC) | `APME_GATEWAY_GRPC_LISTEN` |
+| 8080 | Gateway (HTTP) | `APME_GATEWAY_HTTP_PORT` |
+| 8081 | UI (nginx) | — |
 | 8765 | Galaxy Proxy | `APME_GALAXY_PROXY_URL` |
 
 ## Related Documents

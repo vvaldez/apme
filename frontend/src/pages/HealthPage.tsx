@@ -39,22 +39,34 @@ export function HealthPage() {
             <thead>
               <tr>
                 <th>Component</th>
+                <th>Address</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>Gateway</td>
+                <td style={{ color: "var(--apme-text-secondary)" }}>this service</td>
                 <td style={{ color: statusColor(health.status) }}>
                   {statusIcon(health.status)} {health.status}
                 </td>
               </tr>
               <tr>
                 <td>Database</td>
+                <td style={{ color: "var(--apme-text-secondary)" }}>SQLite</td>
                 <td style={{ color: statusColor(health.database) }}>
                   {statusIcon(health.database)} {health.database}
                 </td>
               </tr>
+              {health.components.map((c) => (
+                <tr key={c.name}>
+                  <td>{c.name}</td>
+                  <td style={{ color: "var(--apme-text-secondary)", fontFamily: "var(--pf-v5-global--FontFamily--monospace)" }}>{c.address}</td>
+                  <td style={{ color: statusColor(c.status) }}>
+                    {statusIcon(c.status)} {c.status}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

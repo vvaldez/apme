@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -230,21 +230,44 @@ async def test_stop_sinks_clears_list() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_grpc_sink_skips_when_unavailable() -> None:
-    """Events are silently dropped when endpoint is unavailable."""
+async def test_grpc_sink_uses_fast_fail_when_unavailable() -> None:
+    """Delivery uses a short fast-fail timeout when endpoint is known-down."""
+    from apme_engine.daemon.sinks.grpc_reporting import _FAST_FAIL_TIMEOUT_S
+
     sink = GrpcReportingSink("localhost:99999")
     sink._available = False
-    sink._stub = MagicMock()
+
+    mock_stub = AsyncMock()
+    mock_stub.ReportScanCompleted.return_value = ReportAck()
+    sink._stub = mock_stub
+
+    await sink.on_scan_completed(_scan_event())
+    mock_stub.ReportScanCompleted.assert_awaited_once()
+    assert mock_stub.ReportScanCompleted.call_args.kwargs.get("timeout") == _FAST_FAIL_TIMEOUT_S
+    assert sink._available is True
+
+    sink._available = False
+    mock_stub.ReportFixCompleted.return_value = ReportAck()
+
+    await sink.on_fix_completed(_fix_event())
+    mock_stub.ReportFixCompleted.assert_awaited_once()
+    assert mock_stub.ReportFixCompleted.call_args.kwargs.get("timeout") == _FAST_FAIL_TIMEOUT_S
+    assert sink._available is True
+
+
+async def test_grpc_sink_skips_when_stub_is_none() -> None:
+    """Events are silently dropped when stub has not been initialized."""
+    sink = GrpcReportingSink("localhost:99999")
+    sink._stub = None
 
     await sink.on_scan_completed(_scan_event())
     await sink.on_fix_completed(_fix_event())
 
-    sink._stub.ReportScanCompleted.assert_not_called()
-    sink._stub.ReportFixCompleted.assert_not_called()
-
 
 async def test_grpc_sink_sends_when_available() -> None:
-    """Events are sent when endpoint is marked available."""
+    """Events are sent with the full timeout when endpoint is available."""
+    from apme_engine.daemon.sinks.grpc_reporting import _TIMEOUT_S
+
     sink = GrpcReportingSink("localhost:50060")
     sink._available = True
 
@@ -255,9 +278,11 @@ async def test_grpc_sink_sends_when_available() -> None:
 
     await sink.on_scan_completed(_scan_event())
     mock_stub.ReportScanCompleted.assert_awaited_once()
+    assert mock_stub.ReportScanCompleted.call_args.kwargs.get("timeout") == _TIMEOUT_S
 
     await sink.on_fix_completed(_fix_event())
     mock_stub.ReportFixCompleted.assert_awaited_once()
+    assert mock_stub.ReportFixCompleted.call_args.kwargs.get("timeout") == _TIMEOUT_S
 
 
 async def test_grpc_sink_flips_unavailable_on_send_failure() -> None:

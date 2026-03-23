@@ -8,10 +8,14 @@ full scan + fix lifecycle (ADR-029).
 
 from __future__ import annotations
 
+import asyncio
+import os
+
 from fastapi import APIRouter, HTTPException, Query, WebSocket
 
 from apme_gateway.api.schemas import (
     AiAcceptanceEntry,
+    ComponentHealth,
     FixRateEntry,
     HealthStatus,
     LogEntry,
@@ -32,19 +36,114 @@ from apme_gateway.db.models import Scan
 router = APIRouter(prefix="/api/v1")
 
 
-@router.get("/health")  # type: ignore[untyped-decorator]
-async def health() -> HealthStatus:
-    """Check gateway health including database connectivity.
+_UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
+    ("Primary Orchestrator", "APME_PRIMARY_ADDRESS", "127.0.0.1:50051"),
+    ("Native Validator", "NATIVE_GRPC_ADDRESS", "127.0.0.1:50055"),
+    ("OPA Validator", "OPA_GRPC_ADDRESS", "127.0.0.1:50054"),
+    ("Ansible Validator", "ANSIBLE_GRPC_ADDRESS", "127.0.0.1:50053"),
+    ("Gitleaks Validator", "GITLEAKS_GRPC_ADDRESS", "127.0.0.1:50056"),
+    ("Galaxy Proxy", "APME_GALAXY_PROXY_URL", "http://127.0.0.1:8765"),
+]
+
+
+async def _probe_grpc(address: str) -> bool:
+    """Probe a gRPC service via the standard health check service.
+
+    Returns ``True`` if the health check succeeds **or** the service
+    responds with ``UNIMPLEMENTED`` (reachable but no health service).
+
+    Args:
+        address: ``host:port`` of the gRPC service.
 
     Returns:
-        HealthStatus with overall and component statuses.
+        True if the service is reachable.
     """
+    import grpc.aio
+
+    channel = grpc.aio.insecure_channel(address)
+    try:
+        try:
+            from grpc_health.v1 import health_pb2, health_pb2_grpc
+
+            stub = health_pb2_grpc.HealthStub(channel)
+            await stub.Check(health_pb2.HealthCheckRequest(), timeout=2)
+            return True
+        except grpc.aio.AioRpcError as e:
+            return e.code() == grpc.StatusCode.UNIMPLEMENTED
+        except Exception:
+            return False
+    finally:
+        await channel.close(grace=None)
+
+
+async def _probe_http(url: str) -> bool:
+    """Probe an HTTP service via a simple GET.
+
+    Args:
+        url: Base URL (e.g. ``http://127.0.0.1:8765``).
+
+    Returns:
+        True if the service responds with a non-server-error status (< 500).
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.get(url.rstrip("/") + "/simple/")
+            return bool(resp.status_code < 500)
+    except Exception:
+        return False
+
+
+async def _check_component(name: str, env_var: str, default: str) -> ComponentHealth:
+    """Check a single upstream component.
+
+    Args:
+        name: Display name for the component.
+        env_var: Environment variable holding the address.
+        default: Default address if env var is not set.
+
+    Returns:
+        ComponentHealth with probed status.
+    """
+    address = os.environ.get(env_var, "").strip() or default
+    if address.startswith("http"):
+        ok = await _probe_http(address)
+    else:
+        ok = await _probe_grpc(address)
+    return ComponentHealth(
+        name=name,
+        status="ok" if ok else "unavailable",
+        address=address,
+    )
+
+
+@router.get("/health")  # type: ignore[untyped-decorator]
+async def health() -> HealthStatus:
+    """Check gateway health including database and upstream services.
+
+    Returns:
+        HealthStatus with overall, database, and per-component statuses.
+    """
+    db_ok = True
     try:
         async with get_session() as db:
             await q.session_count(db)
-        return HealthStatus(status="ok", database="ok")
     except Exception:
-        return HealthStatus(status="degraded", database="unavailable")
+        db_ok = False
+
+    components = await asyncio.gather(
+        *(_check_component(name, env_var, default) for name, env_var, default in _UPSTREAM_SERVICES)
+    )
+    component_list = list(components)
+
+    all_ok = db_ok and all(c.status == "ok" for c in component_list)
+
+    return HealthStatus(
+        status="ok" if all_ok else "degraded",
+        database="ok" if db_ok else "unavailable",
+        components=component_list,
+    )
 
 
 @router.get("/sessions")  # type: ignore[untyped-decorator]

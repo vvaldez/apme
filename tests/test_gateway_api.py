@@ -91,12 +91,25 @@ async def _seed(
 
 
 async def test_health(client: AsyncClient) -> None:
-    """Health endpoint returns ok when DB is available.
+    """Health endpoint returns ok when DB and upstream services are available.
+
+    Upstream component probes are mocked because no real services run in
+    unit tests.  Integration tests cover live probing.
 
     Args:
         client: Async HTTP test client.
     """
-    resp = await client.get("/api/v1/health")
+    from unittest.mock import AsyncMock, patch
+
+    from apme_gateway.api.schemas import ComponentHealth
+
+    mock_component = ComponentHealth(name="mock", status="ok", address="127.0.0.1:0")
+    with patch(
+        "apme_gateway.api.router._check_component",
+        new_callable=AsyncMock,
+        return_value=mock_component,
+    ):
+        resp = await client.get("/api/v1/health")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"

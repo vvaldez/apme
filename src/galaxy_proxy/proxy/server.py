@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from galaxy_proxy.converter import tarball_to_wheel
 from galaxy_proxy.galaxy_client import GalaxyClient, GalaxyServer
-from galaxy_proxy.metadata import sha256_file
+from galaxy_proxy.metadata import sha256_file_hex
 from galaxy_proxy.naming import (
     is_collection_package,
     normalize_pep503,
@@ -141,7 +141,7 @@ def create_app(
             whl_name = wheel_filename(namespace, name, version)
 
             cached_wheel = cache.wheel_path(whl_name)
-            whl_hash = sha256_file(cached_wheel) if cached_wheel else ""
+            whl_hash = sha256_file_hex(cached_wheel) if cached_wheel else ""
 
             href = f"/wheels/{whl_name}"
             if whl_hash:

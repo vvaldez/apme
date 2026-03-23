@@ -142,7 +142,9 @@ def test_milestone_logs_displayed(scan_verbose: subprocess.CompletedProcess[str]
     stderr = scan_verbose.stderr
 
     assert "[primary]" in stderr, f"Expected [primary] phase in stderr:\n{stderr[:2000]}"
-    assert "Scan: start" in stderr, f"Expected 'Scan: start' milestone in stderr:\n{stderr[:2000]}"
+    assert "start" in stderr and ("Scan: start" in stderr or "ScanStream: start" in stderr), (
+        f"Expected 'Scan: start' or 'ScanStream: start' milestone in stderr:\n{stderr[:2000]}"
+    )
     assert "Scan: pipeline done" in stderr, f"Expected 'Scan: pipeline done' milestone in stderr:\n{stderr[:2000]}"
     assert "Fan-out:" in stderr, f"Expected 'Fan-out:' milestone in stderr:\n{stderr[:2000]}"
     assert "Venv: ready" in stderr, f"Expected 'Venv: ready' milestone in stderr:\n{stderr[:2000]}"

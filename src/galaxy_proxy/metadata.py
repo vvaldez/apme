@@ -163,3 +163,19 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return base64.urlsafe_b64encode(h.digest()).rstrip(b"=").decode("ascii")
+
+
+def sha256_file_hex(path: Path) -> str:
+    """Return hex-encoded SHA256 digest of a file (PEP 503 URL fragments).
+
+    Args:
+        path: Path to the file to read and hash.
+
+    Returns:
+        Lowercase hex SHA256 digest string, per PEP 503.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
