@@ -69,6 +69,11 @@ class PrimaryStub(object):
                 request_serializer=apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
                 _registered_method=True)
+        self.ListAIModels = channel.unary_unary(
+                '/apme.v1.Primary/ListAIModels',
+                request_serializer=apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.FromString,
+                _registered_method=True)
 
 
 class PrimaryServicer(object):
@@ -117,6 +122,13 @@ class PrimaryServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListAIModels(self, request, context):
+        """List AI models available from the configured Abbenay daemon.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PrimaryServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -149,6 +161,11 @@ def add_PrimaryServicer_to_server(servicer, server):
                     servicer.FixSession,
                     request_deserializer=apme_dot_v1_dot_primary__pb2.SessionCommand.FromString,
                     response_serializer=apme_dot_v1_dot_primary__pb2.SessionEvent.SerializeToString,
+            ),
+            'ListAIModels': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListAIModels,
+                    request_deserializer=apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -317,6 +334,33 @@ class Primary(object):
             '/apme.v1.Primary/FixSession',
             apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
             apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListAIModels(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/apme.v1.Primary/ListAIModels',
+            apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.SerializeToString,
+            apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -20,6 +20,9 @@ service Primary {
   // file chunks then approval commands; server streams progress, proposals,
   // and results. Replaces the former one-shot FixStream RPC.
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
+
+  // List AI models available from the configured Abbenay daemon.
+  rpc ListAIModels(ListAIModelsRequest) returns (ListAIModelsResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +232,22 @@ message SessionClosed {}
 message DataPayload {
   string kind = 1;
   google.protobuf.Struct data = 2;
+}
+
+// ---------------------------------------------------------------------------
+// ListAIModels
+// ---------------------------------------------------------------------------
+
+message ListAIModelsRequest {}
+
+message AIModelInfo {
+  string id = 1;
+  string provider = 2;
+  string name = 3;
+}
+
+message ListAIModelsResponse {
+  repeated AIModelInfo models = 1;
 }
 
 enum SessionStatus {

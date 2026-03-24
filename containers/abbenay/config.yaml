@@ -1,0 +1,20 @@
+# Abbenay dev configuration for the APME pod.
+#
+# Models: configure one or more LLM providers below. API keys are read
+# from environment variables (set in containers/abbenay/.env).
+#
+# Consumers: the "apme" consumer uses a well-known dev token so the
+# Primary container can authenticate without per-dev setup.
+
+providers:
+  openrouter:
+    engine: openrouter
+    models:
+      anthropic/claude-sonnet-4: {}
+    api_key_env: OPENROUTER_API_KEY
+
+consumers:
+  apme:
+    token_env: APME_ABBENAY_TOKEN
+    capabilities:
+      inline_policy: true

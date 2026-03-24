@@ -9,6 +9,7 @@ echo "==> Building base image (shared dependencies)..."
 podman build -t localhost/apme-base:latest -f containers/base/Dockerfile .
 
 echo "==> Building service images..."
+podman build -t apme-abbenay:latest -f containers/abbenay/Dockerfile .
 podman build -t apme-primary:latest -f containers/primary/Dockerfile .
 podman build -t apme-native:latest -f containers/native/Dockerfile .
 podman build -t apme-opa:latest -f containers/opa/Dockerfile .

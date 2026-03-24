@@ -35,6 +35,7 @@ from apme.v1.common_pb2 import (
     ValidatorDiagnostics,
 )
 from apme.v1.primary_pb2 import (
+    AIModelInfo,
     ApprovalAck,
     FileDiff,
     FilePatch,
@@ -42,6 +43,8 @@ from apme.v1.primary_pb2 import (
     FixReport,
     FormatRequest,
     FormatResponse,
+    ListAIModelsRequest,
+    ListAIModelsResponse,
     Proposal,
     ProposalsReady,
     ScanChunk,
@@ -1548,6 +1551,56 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         if session.status == 3:  # COMPLETE
             async for event in self._session_build_result(session):
                 yield event
+
+    # ── ListAIModels RPC ────────────────────────────────────────────────
+
+    async def ListAIModels(
+        self,
+        request: ListAIModelsRequest,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> ListAIModelsResponse:
+        """Return models available from the Abbenay daemon.
+
+        Gracefully returns an empty list when Abbenay is unreachable
+        or the ``abbenay_grpc`` client is not installed.
+
+        Args:
+            request: ListAIModels request (unused).
+            context: gRPC servicer context.
+
+        Returns:
+            ListAIModelsResponse with available models.
+        """
+        try:
+            from abbenay_grpc import AbbenayClient  # noqa: PLC0415
+        except ImportError:
+            logger.debug("abbenay_grpc not installed — returning empty model list")
+            return ListAIModelsResponse(models=[])
+
+        addr = os.environ.get("APME_ABBENAY_ADDR", "").strip()
+        if not addr:
+            return ListAIModelsResponse(models=[])
+
+        try:
+            if addr.startswith("unix://"):
+                client = AbbenayClient(addr)
+            else:
+                host, sep, port_str = addr.rpartition(":")
+                if sep:
+                    client = AbbenayClient(host=host or "localhost", port=int(port_str))
+                else:
+                    client = AbbenayClient(host=addr)
+            await client.connect()
+            try:
+                raw_models = await client.list_models()
+            finally:
+                await client.disconnect()
+
+            models = [AIModelInfo(id=m.id, provider=m.provider, name=m.name) for m in raw_models]
+            return ListAIModelsResponse(models=models)
+        except Exception:
+            logger.warning("Failed to list AI models from Abbenay at %s", addr, exc_info=True)
+            return ListAIModelsResponse(models=[])
 
     # ── Health RPC (aggregate) ────────────────────────────────────────
 

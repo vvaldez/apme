@@ -203,6 +203,19 @@ class DataPayload:
 # LogLevel enum constants moved to common_pb2 (ADR-033).
 # Re-exported here for backward compatibility.
 
+class ListAIModelsRequest:
+    def __init__(self, **kwargs: object) -> None: ...
+
+class AIModelInfo:
+    id: str
+    provider: str
+    name: str
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ListAIModelsResponse:
+    models: list[AIModelInfo]
+    def __init__(self, **kwargs: object) -> None: ...
+
 SESSION_STATUS_UNSPECIFIED: int
 AWAITING_APPROVAL: int
 PROCESSING: int

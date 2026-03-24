@@ -32,6 +32,12 @@ spec:
           value: "http://127.0.0.1:8765"
         - name: APME_REPORTING_ENDPOINT
           value: "127.0.0.1:50060"
+        - name: APME_ABBENAY_ADDR
+          value: "127.0.0.1:50057"
+        - name: APME_ABBENAY_TOKEN
+          value: "apme-dev-token"
+        - name: APME_AI_MODEL
+          value: "${APME_AI_MODEL}"
       ports:
         - containerPort: 50051
           hostPort: 50051
@@ -100,6 +106,16 @@ spec:
       ports:
         - containerPort: 8081
           hostPort: 8081
+    - name: abbenay
+      image: apme-abbenay:latest
+      env:
+        - name: OPENROUTER_API_KEY
+          value: "${OPENROUTER_API_KEY}"
+        - name: APME_ABBENAY_TOKEN
+          value: "apme-dev-token"
+      ports:
+        - containerPort: 50057
+          hostPort: 50057
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       ports:

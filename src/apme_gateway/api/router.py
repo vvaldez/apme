@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket
 
 from apme_gateway.api.schemas import (
     AiAcceptanceEntry,
+    AiModelInfo,
     ComponentHealth,
     FixRateEntry,
     HealthStatus,
@@ -43,6 +44,7 @@ _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
     ("Ansible Validator", "ANSIBLE_GRPC_ADDRESS", "127.0.0.1:50053"),
     ("Gitleaks Validator", "GITLEAKS_GRPC_ADDRESS", "127.0.0.1:50056"),
     ("Galaxy Proxy", "APME_GALAXY_PROXY_URL", "http://127.0.0.1:8765"),
+    ("Abbenay AI", "APME_ABBENAY_ADDR", "127.0.0.1:50057"),
 ]
 
 
@@ -144,6 +146,33 @@ async def health() -> HealthStatus:
         database="ok" if db_ok else "unavailable",
         components=component_list,
     )
+
+
+@router.get("/ai/models")  # type: ignore[untyped-decorator]
+async def list_ai_models() -> list[AiModelInfo]:
+    """Return AI models available from the Abbenay daemon via Primary.
+
+    Calls the Primary's ``ListAIModels`` gRPC method and translates the
+    response to JSON.  Returns an empty list when Primary or Abbenay is
+    unreachable (graceful degradation).
+
+    Returns:
+        List of available AI models.
+    """
+    import grpc.aio  # noqa: PLC0415
+
+    from apme.v1 import primary_pb2, primary_pb2_grpc  # noqa: PLC0415
+
+    primary_addr = os.environ.get("APME_PRIMARY_ADDRESS", "").strip() or "127.0.0.1:50051"
+    channel = grpc.aio.insecure_channel(primary_addr)
+    try:
+        stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+        resp = await stub.ListAIModels(primary_pb2.ListAIModelsRequest(), timeout=5)
+        return [AiModelInfo(id=m.id, provider=m.provider, name=m.name) for m in resp.models]
+    except Exception:
+        return []
+    finally:
+        await channel.close(grace=None)
 
 
 @router.get("/sessions")  # type: ignore[untyped-decorator]

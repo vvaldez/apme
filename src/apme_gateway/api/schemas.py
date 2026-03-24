@@ -249,6 +249,20 @@ class PaginatedResponse(BaseModel):  # type: ignore[misc]
     items: list[SessionSummary] | list[ScanSummary] | list[TopViolation]
 
 
+class AiModelInfo(BaseModel):  # type: ignore[misc]
+    """AI model available from the Abbenay daemon.
+
+    Attributes:
+        id: Model identifier (e.g. ``anthropic/claude-sonnet-4``).
+        provider: LLM provider engine name.
+        name: Human-readable model name.
+    """
+
+    id: str
+    provider: str
+    name: str
+
+
 class ComponentHealth(BaseModel):  # type: ignore[misc]
     """Health status for a single service component.
 

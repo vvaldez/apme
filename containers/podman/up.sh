@@ -23,6 +23,17 @@ fi
 
 mkdir -p "$CACHE_PATH"
 
+# Load Abbenay secrets (.env) if present.
+ABBENAY_ENV="$ROOT/containers/abbenay/.env"
+if [[ -f "$ABBENAY_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ABBENAY_ENV"
+  set +a
+fi
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+APME_AI_MODEL="${APME_AI_MODEL:-}"
+
 # Tear down any existing pod so we get a clean start.
 if podman pod exists apme-pod 2>/dev/null; then
   echo "Stopping existing apme-pod..."
@@ -30,10 +41,13 @@ if podman pod exists apme-pod 2>/dev/null; then
   podman pod rm apme-pod 2>/dev/null || true
 fi
 
-# Pod YAML cannot use env vars; we always inject the resolved path.
-# Escape \, &, and the | delimiter so sed substitution is safe.
+# Pod YAML cannot use env vars; we inject values via envsubst.
+# CACHE_PATH is escaped for sed since it may contain special chars;
+# everything else goes through envsubst so secrets stay out of argv.
 ESCAPED_PATH=$(printf '%s\n' "$CACHE_PATH" | sed -e 's/\\/\\\\/g' -e 's/[&|]/\\&/g')
+export OPENROUTER_API_KEY APME_AI_MODEL
 sed "s|path: __APME_CACHE_PATH__|path: ${ESCAPED_PATH}|" containers/podman/pod.yaml \
+  | envsubst '$OPENROUTER_API_KEY $APME_AI_MODEL' \
   | podman play kube -
 
 echo "Pod apme-pod started (cache: $CACHE_PATH). Run a scan: containers/podman/run-cli.sh"
