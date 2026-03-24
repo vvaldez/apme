@@ -309,18 +309,7 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         severity: dict[str, int] = {}
         for v in violations:
             severity[v.level] = severity.get(v.level, 0) + 1
-    latest_summary = None
-    if latest:
-        latest_summary = ScanSummary(
-            scan_id=latest.scan_id,
-            session_id=latest.session_id,
-            project_path=latest.project_path,
-            source=latest.source,
-            created_at=latest.created_at,
-            scan_type=latest.scan_type,
-            total_violations=latest.total_violations,
-            auto_fixable=latest.auto_fixable,
-        )
+    latest_summary = _scan_to_summary(latest) if latest else None
     vt = _compute_violation_trend(trend)
     last_scan_at = trend[-1].created_at if trend else None
     return ProjectDetail(
@@ -423,19 +412,7 @@ async def list_project_scans(
             raise HTTPException(status_code=404, detail="Project not found")
         scans = await q.project_scans(db, project_id, limit=limit, offset=offset)
         total = await q.project_scan_count(db, project_id)
-    items = [
-        ScanSummary(
-            scan_id=s.scan_id,
-            session_id=s.session_id,
-            project_path=s.project_path,
-            source=s.source,
-            created_at=s.created_at,
-            scan_type=s.scan_type,
-            total_violations=s.total_violations,
-            auto_fixable=s.auto_fixable,
-        )
-        for s in scans
-    ]
+    items = [_scan_to_summary(s) for s in scans]
     return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -461,19 +438,21 @@ async def list_project_violations(
         if not proj:
             raise HTTPException(status_code=404, detail="Project not found")
         violations = await q.project_violations(db, project_id)
-    result = [
+    return [
         ViolationDetail(
+            id=v.id,
             rule_id=v.rule_id,
             level=v.level,
             message=v.message,
             file=v.file,
             line=v.line,
-            column=v.column,
+            path=v.path,
+            remediation_class=v.remediation_class,
+            scope=v.scope,
         )
         for v in violations
         if severity is None or v.level == severity
     ]
-    return result
 
 
 @router.get("/projects/{project_id}/trend")  # type: ignore[untyped-decorator]
@@ -503,6 +482,8 @@ async def project_trend_endpoint(
             scan_id=t.scan_id,
             created_at=t.created_at,
             total_violations=t.total_violations,
+            auto_fixable=t.auto_fixable,
+            scan_type=t.scan_type,
         )
         for t in trend
     ]
