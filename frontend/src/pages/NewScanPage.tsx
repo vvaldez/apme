@@ -83,6 +83,7 @@ export function NewScanPage() {
       ansibleVersion,
       collections: colls.length ? colls : undefined,
       enableAi,
+      aiModel: enableAi ? (localStorage.getItem('apme-ai-model') ?? undefined) : undefined,
     });
   }, [files, ansibleVersion, collections, enableAi, startSession]);
 

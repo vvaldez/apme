@@ -74,6 +74,7 @@ export interface SessionOptions {
   ansibleVersion?: string;
   collections?: string[];
   enableAi?: boolean;
+  aiModel?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -148,6 +149,7 @@ export function useSessionStream() {
               ansible_version: options.ansibleVersion || "",
               collections: options.collections || [],
               enable_ai: options.enableAi ?? true,
+              ai_model: options.aiModel || "",
             },
           }),
         );
