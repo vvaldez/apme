@@ -692,11 +692,10 @@ class TestSessionProgressStreaming:
             file_paths: list[str],
             **kwargs: object,
         ) -> MagicMock:
-            if engine_self._progress_cb is not None:
-                engine_self._progress_cb("tier1", "Pass 1/1: scanning...", 0.0)
-                engine_self._progress_cb("tier1", "Pass 1: 3 fixable violations", 0.0)
-                engine_self._progress_cb("tier1", "Pass 1: 3 transforms applied", 0.0)
-                engine_self._progress_cb("tier1", "Converged at pass 1 (0 fixable)", 1.0)
+            engine_self._progress("tier1", "Pass 1/1: scanning...", 0.0)
+            engine_self._progress("tier1", "Pass 1: 3 fixable violations", 0.0)
+            engine_self._progress("tier1", "Pass 1: 3 transforms applied", 0.0)
+            engine_self._progress("tier1", "Converged at pass 1 (0 fixable)", 1.0)
             return MagicMock(
                 applied_patches=[],
                 ai_proposed=[],

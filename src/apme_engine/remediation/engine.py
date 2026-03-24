@@ -145,7 +145,10 @@ class RemediationEngine:
             fraction: Optional 0.0–1.0 completion fraction.
         """
         if self._progress_cb is not None:
-            self._progress_cb(phase, message, fraction)
+            try:
+                self._progress_cb(phase, message, fraction)
+            except Exception:
+                logger.warning("Progress callback raised; ignoring error", exc_info=True)
 
     def set_node_index(self, node_index: NodeIndex) -> None:
         """Set or replace the hierarchy node index.

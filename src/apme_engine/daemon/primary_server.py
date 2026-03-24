@@ -511,12 +511,17 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 nonlocal validators_done
                 try:
                     result: _ValidatorResult = await coro
-                finally:
+                except BaseException as exc:
                     validators_done += 1
-                if _pcb:
-                    count = len(result.violations)
-                    _pcb("scan", f"{name.title()}: {count} findings", validators_done / num_validators)
-                return name, result
+                    if _pcb:
+                        _pcb("scan", f"{name.title()}: error: {exc}", validators_done / num_validators)
+                    raise
+                else:
+                    validators_done += 1
+                    if _pcb:
+                        count = len(result.violations)
+                        _pcb("scan", f"{name.title()}: {count} findings", validators_done / num_validators)
+                    return name, result
 
             named_results = await asyncio.gather(
                 *[_run_validator(n, c) for n, c in zip(task_names, task_coros, strict=True)],
@@ -1249,28 +1254,31 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         heartbeat_task = asyncio.create_task(_heartbeat())
         remediate_future = loop.run_in_executor(None, engine.remediate, yaml_paths)
 
-        # Drain progress queue while remediation runs, yielding events
-        while not remediate_future.done():
-            try:
-                update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
-            if update is not None:
-                session.progress_logs.append(update)
-                yield SessionEvent(progress=update)
+        try:
+            # Drain progress queue while remediation runs, yielding events
+            while not remediate_future.done():
+                try:
+                    update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if update is not None:
+                    session.progress_logs.append(update)
+                    yield SessionEvent(progress=update)
 
-        heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat_task
+            # Drain any remaining queued progress
+            while not progress_queue.empty():
+                update = progress_queue.get_nowait()
+                if update is not None:
+                    session.progress_logs.append(update)
+                    yield SessionEvent(progress=update)
 
-        # Drain any remaining queued progress
-        while not progress_queue.empty():
-            update = progress_queue.get_nowait()
-            if update is not None:
-                session.progress_logs.append(update)
-                yield SessionEvent(progress=update)
-
-        report = remediate_future.result()
+            report = remediate_future.result()
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+            if not remediate_future.done():
+                remediate_future.cancel()
 
         # Post-remediation format pass
         for patch in report.applied_patches:
