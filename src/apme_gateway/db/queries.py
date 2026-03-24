@@ -102,7 +102,9 @@ async def list_projects(
     Returns:
         List of Project objects.
     """
-    col = getattr(Project, sort_by, Project.created_at)
+    _ALLOWED_SORT = {"created_at", "name", "health_score"}
+    col_name = sort_by if sort_by in _ALLOWED_SORT else "created_at"
+    col = getattr(Project, col_name)
     order_clause = col.asc() if order == "asc" else col.desc()
     stmt = select(Project).order_by(order_clause).limit(limit).offset(offset)
     result = await db.execute(stmt)
@@ -373,7 +375,7 @@ async def dashboard_summary(db: AsyncSession) -> dict[str, object]:
 
     avg_result = await db.execute(select(func.avg(Project.health_score)))
     avg_raw = avg_result.scalar_one()
-    avg_health = round(float(avg_raw), 1) if avg_raw is not None else 0.0
+    avg_health = round(float(avg_raw)) if avg_raw is not None else 0
 
     return {
         "total_projects": total_projects,

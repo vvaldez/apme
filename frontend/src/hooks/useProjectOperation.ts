@@ -59,6 +59,8 @@ export function useProjectOperation(projectId: string) {
   const [result, setResult] = useState<ProjectOperationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const statusRef = useRef<ProjectOperationStatus>(status);
+  statusRef.current = status;
 
   const reset = useCallback(() => {
     if (wsRef.current) {
@@ -147,7 +149,7 @@ export function useProjectOperation(projectId: string) {
             break;
 
           case "closed":
-            if (status !== "complete" && status !== "error") {
+            if (statusRef.current !== "complete" && statusRef.current !== "error") {
               setStatus("complete");
             }
             break;
@@ -160,13 +162,13 @@ export function useProjectOperation(projectId: string) {
       };
 
       ws.onclose = (event) => {
-        if (event.code !== 1000 && status !== "complete" && status !== "error") {
+        if (event.code !== 1000 && statusRef.current !== "complete" && statusRef.current !== "error") {
           setError("Connection closed unexpectedly");
           setStatus("error");
         }
       };
     },
-    [projectId, reset, status],
+    [projectId, reset],
   );
 
   const approve = useCallback(

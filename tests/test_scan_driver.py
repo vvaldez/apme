@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 from collections.abc import AsyncIterator
@@ -32,11 +31,9 @@ def test_derive_session_id_different_projects() -> None:
 async def test_clone_repo_success() -> None:
     """Verify clone_repo succeeds when git returns 0."""
     with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
-        future: asyncio.Future[MagicMock] = asyncio.get_event_loop().create_future()
         result = MagicMock()
         result.returncode = 0
         result.stderr = ""
-        future.set_result(result)
         mock_loop.return_value.run_in_executor = AsyncMock(return_value=result)
 
         with tempfile.TemporaryDirectory() as td:

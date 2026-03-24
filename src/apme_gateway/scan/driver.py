@@ -124,19 +124,21 @@ async def run_project_scan(
                 ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
             ],
         )
-        stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+        try:
+            stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
 
-        response_stream = stub.ScanStream(iter(chunks), timeout=300)
+            response_stream = stub.ScanStream(iter(chunks), timeout=300)
 
-        result: primary_pb2.ScanResponse | None = None
-        async for event in response_stream:
-            if progress_callback:
-                await progress_callback(event)
-            if event.HasField("result"):
-                result = event.result
+            result: primary_pb2.ScanResponse | None = None
+            async for event in response_stream:
+                if progress_callback:
+                    await progress_callback(event)
+                if event.HasField("result"):
+                    result = event.result
 
-        await channel.close(grace=None)
-        return result
+            return result
+        finally:
+            await channel.close(grace=None)
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -218,28 +220,30 @@ async def run_project_fix(
                 ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
             ],
         )
-        stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+        try:
+            stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
 
-        response_stream = stub.FixSession(_command_stream(), timeout=600)
+            response_stream = stub.FixSession(_command_stream(), timeout=600)
 
-        result: primary_pb2.ScanResponse | None = None
-        async for event in response_stream:
-            if progress_callback:
-                await progress_callback(event)
+            result: primary_pb2.ScanResponse | None = None
+            async for event in response_stream:
+                if progress_callback:
+                    await progress_callback(event)
 
-            kind = event.WhichOneof("event")
-            if kind == "proposals" and approval_queue:
-                approved_ids = await approval_queue.get()
-                await command_queue.put(
-                    primary_pb2.SessionCommand(approve=primary_pb2.ApprovalRequest(approved_ids=approved_ids))
-                )
-            elif kind == "result":
-                result = event.result
-                await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
-                await command_queue.put(None)
+                kind = event.WhichOneof("event")
+                if kind == "proposals" and approval_queue:
+                    approved_ids = await approval_queue.get()
+                    await command_queue.put(
+                        primary_pb2.SessionCommand(approve=primary_pb2.ApprovalRequest(approved_ids=approved_ids))
+                    )
+                elif kind == "result":
+                    result = event.result
+                    await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                    await command_queue.put(None)
 
-        await channel.close(grace=None)
-        return result
+            return result
+        finally:
+            await channel.close(grace=None)
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

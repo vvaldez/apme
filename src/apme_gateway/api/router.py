@@ -239,7 +239,13 @@ async def list_projects(
         Paginated list of project summaries.
     """
     async with get_session() as db:
-        projects = await q.list_projects(db, limit=limit, offset=offset)
+        projects = await q.list_projects(
+            db,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            order=order,
+        )
         total = await q.project_count(db)
         items: list[ProjectSummary] = []
         for proj in projects:
@@ -822,7 +828,7 @@ async def project_operate_ws(
 
     try:
         msg = await websocket.receive_json()
-        action = msg.get("action", "scan")
+        is_fix = bool(msg.get("fix", False)) or msg.get("action") == "fix"
         options: dict[str, object] = msg.get("options", {})
 
         async with get_session() as db:
@@ -844,7 +850,7 @@ async def project_operate_ws(
         raw_specs = options.get("collection_specs", [])
         specs = [str(s) for s in raw_specs] if isinstance(raw_specs, list) else []
 
-        if action == "fix":
+        if is_fix:
             approval_queue: asyncio.Queue[list[str]] = asyncio.Queue()
             await run_project_fix(
                 project_id=proj.id,
