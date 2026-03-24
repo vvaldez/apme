@@ -1254,6 +1254,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         if report.ai_proposed:
             session.current_tier = 2
             proposals = self._build_proposals_from_ai(report.ai_proposed)
+            for p in proposals:
+                with contextlib.suppress(ValueError):
+                    p.file = str(Path(p.file).relative_to(temp_dir))
             session.proposals = {p.id: p for p in proposals}
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
@@ -1388,10 +1391,17 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         for pid in approved_ids:
             proposal = session.proposals.get(pid)
             if not proposal or not proposal.after_text:
+                logger.warning("Skipping proposal %s: not found or empty after_text", pid)
                 continue
             content = session.working_files.get(proposal.file, b"")
             text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
             if proposal.before_text not in text:
+                logger.warning(
+                    "Skipping proposal %s (%s): before_text not found in working file %s",
+                    pid,
+                    proposal.rule_id,
+                    proposal.file,
+                )
                 continue
             new_text = text.replace(proposal.before_text, proposal.after_text, 1)
             session.working_files[proposal.file] = new_text.encode("utf-8")
@@ -1409,6 +1419,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             applied += 1
 
         session.status = 3  # COMPLETE — user has finished reviewing
+        logger.info(
+            "Approval result: %d/%d proposals applied (session=%s)",
+            applied,
+            len(approved_ids),
+            session.session_id,
+        )
         return applied
 
     async def _session_build_result(

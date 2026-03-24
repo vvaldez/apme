@@ -451,15 +451,19 @@ def _scan_to_summary(scan: Scan) -> ScanSummary:
 
 
 @router.websocket("/ws/session")  # type: ignore[untyped-decorator]
-async def session_ws(websocket: WebSocket) -> None:
+async def session_ws(websocket: WebSocket, resume: str | None = None) -> None:
     """Bidirectional WebSocket bridge to Primary's FixSession gRPC stream.
 
     Handles the full scan + fix lifecycle: file upload, real-time progress,
     Tier 1 auto-fix results, AI proposal delivery, interactive approval,
     and final session results — all over a single connection.
 
+    Pass ``?resume=<session_id>`` to reconnect to an existing session
+    (e.g. after a dropped WebSocket during proposal review).
+
     Args:
         websocket: Incoming WebSocket connection.
+        resume: Optional session ID to resume instead of starting fresh.
     """
     from apme_gateway.config import load_config
     from apme_gateway.session_client import handle_session
@@ -467,4 +471,8 @@ async def session_ws(websocket: WebSocket) -> None:
     await websocket.accept()
 
     cfg = load_config()
-    await handle_session(websocket, cfg.primary_address)
+    await handle_session(
+        websocket,
+        cfg.primary_address,
+        resume_session_id=resume,
+    )

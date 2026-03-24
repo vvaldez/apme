@@ -39,12 +39,15 @@ export function NewScanPage() {
   const {
     status,
     progress,
+    sessionId,
     scanId,
     tier1,
     proposals,
     result,
     error,
+    canReconnect,
     startSession,
+    resumeSession,
     approve,
     cancel,
     reset,
@@ -92,6 +95,12 @@ export function NewScanPage() {
     reset();
     setFiles([]);
   }, [reset]);
+
+  const handleReconnect = useCallback(() => {
+    if (sessionId) {
+      resumeSession(sessionId);
+    }
+  }, [sessionId, resumeSession]);
 
   const isRunning =
     status === 'connecting' ||
@@ -235,6 +244,42 @@ export function NewScanPage() {
           </>
         )}
 
+        {/* Disconnected — session still alive on server, offer reconnect */}
+        {status === 'disconnected' && (
+          <>
+            <Card style={{ marginBottom: 16, border: '1px solid var(--pf-t--global--color--status--warning--default)' }}>
+              <CardBody>
+                <Split hasGutter>
+                  <SplitItem isFilled>
+                    <h3 style={{ color: 'var(--pf-t--global--color--status--warning--default)', margin: 0 }}>
+                      Connection Lost
+                    </h3>
+                    <p style={{ opacity: 0.7, margin: '4px 0 0' }}>
+                      {error || 'The connection was interrupted. Your session is still active on the server.'}
+                    </p>
+                  </SplitItem>
+                  <SplitItem>
+                    <Flex gap={{ default: 'gapSm' }}>
+                      {canReconnect && sessionId && (
+                        <Button variant="primary" onClick={handleReconnect}>
+                          Reconnect
+                        </Button>
+                      )}
+                      <Button variant="secondary" onClick={handleReset}>
+                        Start Over
+                      </Button>
+                    </Flex>
+                  </SplitItem>
+                </Split>
+              </CardBody>
+            </Card>
+            {tier1 && <Tier1Results tier1={tier1} />}
+            {proposals.length > 0 && (
+              <ProposalApproval proposals={proposals} onApprove={approve} />
+            )}
+          </>
+        )}
+
         {/* Final result */}
         {status === 'complete' && result && (
           <SessionComplete result={result} scanId={scanId} tier1={tier1} />
@@ -259,7 +304,16 @@ export function NewScanPage() {
             <CardBody>
               <h2 style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>Session Failed</h2>
               <p style={{ opacity: 0.7 }}>{error}</p>
-              <Button variant="primary" onClick={handleReset}>Try Again</Button>
+              <Flex gap={{ default: 'gapSm' }} justifyContent={{ default: 'justifyContentCenter' }}>
+                {canReconnect && sessionId && (
+                  <Button variant="primary" onClick={handleReconnect}>
+                    Reconnect
+                  </Button>
+                )}
+                <Button variant={canReconnect ? 'secondary' : 'primary'} onClick={handleReset}>
+                  {canReconnect ? 'Start Over' : 'Try Again'}
+                </Button>
+              </Flex>
             </CardBody>
           </Card>
         )}

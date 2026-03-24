@@ -602,20 +602,29 @@ class RemediationEngine:
             )
 
             all_skipped = skipped
+            is_last = attempt >= self._max_ai_attempts - 1
 
             if patches is None:
-                logger.debug("AI attempt %d: returned no patches", attempt + 1)
-                for v in violations:
-                    v["remediation_resolution"] = RemediationResolution.AI_FAILED
-                return None
+                logger.warning(
+                    "AI attempt %d/%d: response unparseable (truncated/malformed JSON), %s",
+                    attempt + 1,
+                    self._max_ai_attempts,
+                    "giving up" if is_last else "retrying",
+                )
+                if is_last:
+                    break
+                feedback = (
+                    "Your previous response was malformed JSON (likely truncated). "
+                    "Respond with ONLY a valid JSON object — no markdown fences, "
+                    "no extra text. Keep the response concise."
+                )
+                continue
 
             patches = [p for p in patches if p.confidence >= 0.01]
 
             if not patches:
                 logger.debug("AI attempt %d: all patches below confidence threshold", attempt + 1)
-                for v in violations:
-                    v["remediation_resolution"] = RemediationResolution.AI_FAILED
-                return None
+                break
 
             validated, t1_applied, new_feedback = self._validate_batch_patches(patches, file_path, file_content)
 
@@ -634,15 +643,15 @@ class RemediationEngine:
             logger.debug(
                 "AI attempt %d: validation failed, %s\n%s",
                 attempt + 1,
-                "retrying" if attempt < self._max_ai_attempts - 1 else "giving up",
+                "retrying" if not is_last else "giving up",
                 feedback or "(no feedback)",
             )
         else:
-            for v in violations:
-                v["remediation_resolution"] = RemediationResolution.AI_FAILED
-            return None
+            pass
 
         if not all_patches:
+            for v in violations:
+                v["remediation_resolution"] = RemediationResolution.AI_FAILED
             return None
 
         # Generate diff hunks and build proposal
