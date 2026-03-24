@@ -238,7 +238,7 @@ def test_native_violations_with_session_venv(dep_dir: str) -> None:
 
     rule_ids = {str(v.get("rule_id", "")).removeprefix("native:") for v in violations}
     assert len(violations) >= 10, f"Expected at least 10 native violations, got {len(violations)}"
-    assert "L028" in rule_ids or "L029" in rule_ids, f"Expected shell/command rules, got {sorted(rule_ids)}"
+    assert "L026" in rule_ids or "L030" in rule_ids, f"Expected FQCN/builtin rules, got {sorted(rule_ids)}"
 
 
 # ---------------------------------------------------------------------------

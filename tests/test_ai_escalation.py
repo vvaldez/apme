@@ -126,14 +126,14 @@ class TestAIPatch:
     def test_create_patch(self) -> None:
         """AIPatch fields are set correctly."""
         p = AIPatch(
-            rule_id="L028",
+            rule_id="L026",
             line_start=10,
             line_end=12,
             fixed_lines="    - name: Do stuff\n      ansible.builtin.shell: echo hi\n",
             explanation="Added task name",
             confidence=0.95,
         )
-        assert p.rule_id == "L028"
+        assert p.rule_id == "L026"
         assert p.line_start == 10
         assert p.line_end == 12
         assert p.diff_hunk == ""
@@ -157,7 +157,7 @@ class TestAIProposal:
     def test_rule_ids_property(self) -> None:
         """rule_ids returns list of patch rule IDs."""
         patches = [
-            AIPatch("L028", 1, 2, "x\n", "a", 0.9),
+            AIPatch("L026", 1, 2, "x\n", "a", 0.9),
             AIPatch("M001", 5, 6, "y\n", "b", 0.8),
         ]
         proposal = AIProposal(
@@ -167,7 +167,7 @@ class TestAIProposal:
             patches=patches,
             diff="diff",
         )
-        assert proposal.rule_ids == ["L028", "M001"]
+        assert proposal.rule_ids == ["L026", "M001"]
 
     def test_confidence_property(self) -> None:
         """Confidence returns minimum across patches."""
@@ -494,11 +494,11 @@ class TestBatchPromptBuilding:
         """Prompt lists all violations."""
         violations: list[ViolationDict] = [
             {"rule_id": "M001", "message": "Use FQCN", "file": "t.yml", "line": 5},
-            {"rule_id": "L028", "message": "No name", "file": "t.yml", "line": 10},
+            {"rule_id": "L026", "message": "No name", "file": "t.yml", "line": 10},
         ]
         prompt = _build_batch_prompt(violations, "- debug: msg=hi\n", "t.yml")
         assert "M001" in prompt
-        assert "L028" in prompt
+        assert "L026" in prompt
         assert "Use FQCN" in prompt
         assert "No name" in prompt
 
@@ -559,7 +559,7 @@ class TestBatchResponseParsing:
                         "confidence": 0.95,
                     },
                     {
-                        "rule_id": "L028",
+                        "rule_id": "L026",
                         "line_start": 5,
                         "line_end": 5,
                         "fixed_lines": "    - name: Do stuff\n",
@@ -574,7 +574,7 @@ class TestBatchResponseParsing:
         assert patches is not None
         assert len(patches) == 2
         assert patches[0].rule_id == "M001"
-        assert patches[1].rule_id == "L028"
+        assert patches[1].rule_id == "L026"
         assert skipped == []
 
     def test_parse_invalid_json(self) -> None:
@@ -597,7 +597,7 @@ class TestBatchResponseParsing:
                 "patches": [
                     {"rule_id": "M001"},
                     {
-                        "rule_id": "L028",
+                        "rule_id": "L026",
                         "line_start": 1,
                         "line_end": 1,
                         "fixed_lines": "fixed\n",
@@ -610,7 +610,7 @@ class TestBatchResponseParsing:
         patches, _ = _parse_batch_response(response, "line1\nline2\n")
         assert patches is not None
         assert len(patches) == 1
-        assert patches[0].rule_id == "L028"
+        assert patches[0].rule_id == "L026"
 
     def test_parse_skips_invalid_line_range(self) -> None:
         """Skips patches with line range outside file."""
@@ -658,7 +658,7 @@ class TestBatchResponseParsing:
             {
                 "patches": [
                     {
-                        "rule_id": "L028",
+                        "rule_id": "L026",
                         "line_start": 1,
                         "line_end": 1,
                         "fixed_lines": "fixed\n",

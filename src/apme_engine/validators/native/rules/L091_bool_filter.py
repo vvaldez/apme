@@ -1,5 +1,6 @@
-"""Native rule L029: detect shell usage where command suffices."""
+"""Native rule L091: detect bare variables in when conditions missing | bool filter."""
 
+import re
 from dataclasses import dataclass
 from typing import cast
 
@@ -9,18 +10,22 @@ from apme_engine.engine.models import (
     RuleResult,
     RunTargetType,
     Severity,
-)
-from apme_engine.engine.models import (
-    ExecutableType as ActionType,
+    YAMLDict,
 )
 from apme_engine.engine.models import (
     RuleTag as Tag,
 )
 
+_BARE_VAR_WHEN = re.compile(
+    r"when:\s*(\w+)\s*$"
+    r"|when:\s*not\s+(\w+)\s*$",
+    re.MULTILINE,
+)
+
 
 @dataclass
-class UseShellRule(Rule):
-    """Rule for tasks using shell instead of command module.
+class BoolFilterRule(Rule):
+    """Rule for using | bool filter on bare variables in when conditions.
 
     Attributes:
         rule_id: Rule identifier.
@@ -32,13 +37,13 @@ class UseShellRule(Rule):
         tags: Rule tags.
     """
 
-    rule_id: str = "L029"
-    description: str = "Use 'command' module instead of 'shell' "
+    rule_id: str = "L091"
+    description: str = "Use | bool for bare variables in when conditions"
     enabled: bool = True
-    name: str = "UseShellRule"
+    name: str = "BoolFilter"
     version: str = "v0.0.1"
-    severity: str = Severity.MEDIUM
-    tags: tuple[str, ...] = (Tag.COMMAND,)
+    severity: str = Severity.LOW
+    tags: tuple[str, ...] = (Tag.CODING,)
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Check if context has a task target.
@@ -54,31 +59,29 @@ class UseShellRule(Rule):
         return bool(ctx.current.type == RunTargetType.Task)
 
     def process(self, ctx: AnsibleRunContext) -> RuleResult | None:
-        """Check for shell module usage and return result.
+        """Check for bare variables in when without | bool.
 
         Args:
             ctx: AnsibleRunContext to process.
 
         Returns:
-            RuleResult with verdict, or None.
+            RuleResult with found_bare detail, or None.
         """
         task = ctx.current
         if task is None:
             return None
-
-        # define a condition for this rule here
-        action_type = getattr(task, "action_type", "")
-        spec_action = getattr(task.spec, "action", None)
-        resolved_action = getattr(task, "resolved_action", "")
-        verdict = bool(
-            action_type == ActionType.MODULE_TYPE
-            and spec_action
-            and resolved_action
-            and resolved_action == "ansible.builtin.shell"
-        )
-
+        yaml_lines = getattr(task.spec, "yaml_lines", "") or ""
+        matches = _BARE_VAR_WHEN.findall(yaml_lines)
+        found = [m[0] or m[1] for m in matches if m[0] or m[1]]
+        found = [f for f in found if f not in ("true", "false", "yes", "no")]
+        verdict = len(found) > 0
+        detail: dict[str, object] = {}
+        if found:
+            detail["bare_variables"] = found
+            detail["message"] = "use | bool filter for bare variables in when conditions"
         return RuleResult(
             verdict=verdict,
+            detail=cast("YAMLDict | None", detail),
             file=cast("tuple[str | int, ...] | None", task.file_info()),
             rule=self.get_metadata(),
         )

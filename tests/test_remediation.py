@@ -285,7 +285,7 @@ class TestPartition:
         reg = TransformRegistry()
         violations: list[ViolationDict] = [
             {"rule_id": "L026", "scope": RuleScope.TASK},
-            {"rule_id": "L028", "scope": "task"},
+            {"rule_id": "L026", "scope": "task"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
         assert len(t2) == 2

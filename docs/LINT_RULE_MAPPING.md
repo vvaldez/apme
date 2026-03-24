@@ -50,8 +50,8 @@ L001 was removed — its scope was limited to shell tasks without names, which i
 |------------------------|--------|------|-------------|
 | R301 | L026 | L026_non_fqcn_use.py | Non-FQCN module use |
 | R302 | L027 | L027_role_without_metadata.py | Role without metadata |
-| R303 | L028 | L028_task_without_name.py | Task without name |
-| R102 | L029 | L029_command_instead_of_shell.py | Prefer command over shell |
+| R303 | L028 | **Removed** — duplicate of L024 (OPA) | Task without name |
+| R102 | L029 | **Removed** — duplicate of L007 (OPA) | Prefer command over shell |
 | R110 | L030 | L030_non_builtin_use.py | Non-builtin module use |
 | R116 | L031 | L031_insecure_file_permission.py | Insecure file permission |
 | R201 | L032 | L032_changed_data_dependence.py | Changed data dependence |
