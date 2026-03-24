@@ -15,17 +15,35 @@ import { SettingsPage } from '../pages/SettingsPage';
 export function useApmeNavigation(): PageNavigationItem[] {
   return useMemo<PageNavigationItem[]>(
     () => [
-      { id: 'dashboard', path: '', label: 'Dashboard', element: <DashboardPage /> },
-      { id: 'new-scan', path: 'new-scan', label: 'New Scan', element: <NewScanPage /> },
-      { id: 'scans', path: 'scans', label: 'Scans', element: <ScansPage /> },
-      { id: 'scan-detail', path: 'scans/:scanId', element: <ScanDetailPage />, hidden: true },
-      { id: 'sessions', path: 'sessions', label: 'Sessions', element: <SessionsPage /> },
-      { id: 'session-detail', path: 'sessions/:sessionId', element: <SessionDetailPage />, hidden: true },
-      { id: 'violations', path: 'violations', label: 'Top Violations', element: <TopViolationsPage /> },
-      { id: 'fix-tracker', path: 'fix-tracker', label: 'Fix Tracker', element: <FixTrackerPage /> },
-      { id: 'ai-metrics', path: 'ai-metrics', label: 'AI Metrics', element: <AiMetricsPage /> },
-      { id: 'health', path: 'health', label: 'Health', element: <HealthPage /> },
-      { id: 'settings', path: 'settings', label: 'Settings', element: <SettingsPage /> },
+      {
+        label: 'Reporting',
+        path: '',
+        children: [
+          { id: 'dashboard', path: '', label: 'Dashboard', element: <DashboardPage /> },
+          { id: 'violations', path: 'violations', label: 'Top Violations', element: <TopViolationsPage /> },
+          { id: 'ai-metrics', path: 'ai-metrics', label: 'AI Metrics', element: <AiMetricsPage /> },
+        ],
+      },
+      {
+        label: 'Operations',
+        path: '',
+        children: [
+          { id: 'new-scan', path: 'new-scan', label: 'New Scan', element: <NewScanPage /> },
+          { id: 'scans', path: 'scans', label: 'Scans', element: <ScansPage /> },
+          { id: 'scan-detail', path: 'scans/:scanId', element: <ScanDetailPage />, hidden: true },
+          { id: 'sessions', path: 'sessions', label: 'Sessions', element: <SessionsPage /> },
+          { id: 'session-detail', path: 'sessions/:sessionId', element: <SessionDetailPage />, hidden: true },
+          { id: 'fix-tracker', path: 'fix-tracker', label: 'Fix Tracker', element: <FixTrackerPage /> },
+        ],
+      },
+      {
+        label: 'Settings',
+        path: '',
+        children: [
+          { id: 'health', path: 'health', label: 'Health', element: <HealthPage /> },
+          { id: 'settings', path: 'settings', label: 'Settings', element: <SettingsPage /> },
+        ],
+      },
     ],
     [],
   );

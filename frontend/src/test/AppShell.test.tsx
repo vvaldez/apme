@@ -32,10 +32,19 @@ describe('App Shell', () => {
     expect(screen.getByText('APME')).toBeInTheDocument();
   });
 
-  it('renders sidebar navigation items', () => {
+  it('renders sidebar navigation groups', () => {
     renderApp();
     const nav = screen.getByTestId('page-navigation');
     expect(nav).toBeInTheDocument();
+
+    for (const group of ['Reporting', 'Operations', 'Settings']) {
+      const items = screen.getAllByText(group);
+      expect(items.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('renders sidebar navigation items', () => {
+    renderApp();
 
     for (const label of ['Dashboard', 'New Scan', 'Scans', 'Sessions', 'Top Violations', 'Fix Tracker', 'AI Metrics', 'Health']) {
       const items = screen.getAllByText(label);

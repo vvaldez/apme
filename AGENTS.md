@@ -150,6 +150,28 @@ When transitioning between agents:
    - Check for notes from previous agent
    - Continue from documented state
 
+## Project Skills
+
+This project defines agent skills in `.agents/skills/`. When the user types a
+`/slash-command`, check `.agents/skills/<command-name>/SKILL.md` **before doing
+anything else**. If a matching skill exists, read it and follow its instructions.
+
+| Command | Purpose |
+|---------|---------|
+| `/adr-new` | Create architectural decision record |
+| `/dr-new` | Capture blocking question |
+| `/dr-review` | Review decision records |
+| `/lean-ci` | CI workflow helpers |
+| `/phase-new` | Create project phase |
+| `/pr-review` | Handle PR review feedback |
+| `/prd-import` | Import product requirements |
+| `/req-new` | Create requirement spec |
+| `/review-contributor-pr` | Review external contributor PRs |
+| `/sdlc-status` | SDLC dashboard status |
+| `/submit-pr` | Create and submit pull requests |
+| `/task-new` | Create implementation task |
+| `/workflow` | Development workflow guidance |
+
 ## Quality Assurance
 
 All agents must:

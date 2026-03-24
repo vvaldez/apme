@@ -33,6 +33,8 @@ _BASE = os.environ.get("APME_UI_URL", "http://localhost:8081")
 def dashboard(page: Page) -> Page:
     """Navigate to the dashboard and wait for the sidebar nav to appear.
 
+    Expands all collapsed nav groups so child links are visible/clickable.
+
     Args:
         page: Playwright page fixture.
 
@@ -41,6 +43,10 @@ def dashboard(page: Page) -> Page:
     """
     page.goto(_BASE, wait_until="networkidle")
     page.wait_for_selector("[data-testid='page-navigation']", timeout=10_000)
+    nav = page.locator("[data-testid='page-navigation']")
+    collapsed = nav.locator("button.pf-v6-c-nav__link[aria-expanded='false']")
+    while collapsed.count() > 0:
+        collapsed.first.click()
     return page
 
 
@@ -53,8 +59,19 @@ def test_page_title(dashboard: Page) -> None:
     expect(dashboard).to_have_title(re.compile(r"Dashboard"))
 
 
+def test_sidebar_nav_groups(dashboard: Page) -> None:
+    """Sidebar contains expandable navigation groups.
+
+    Args:
+        dashboard: Page positioned on the dashboard.
+    """
+    nav = dashboard.locator("[data-testid='page-navigation']")
+    for group in ["Reporting", "Operations", "Settings"]:
+        expect(nav.locator(f"button[aria-expanded]:has-text('{group}')").first).to_be_visible()
+
+
 def test_sidebar_nav_items(dashboard: Page) -> None:
-    """Sidebar contains expected navigation links.
+    """Sidebar contains expected navigation links within groups.
 
     Args:
         dashboard: Page positioned on the dashboard.
