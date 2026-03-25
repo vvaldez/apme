@@ -1,30 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
   Button,
   Card,
   CardBody,
-  Checkbox,
   ExpandableSection,
-  Flex,
-  FlexItem,
-  Label,
-  Progress,
-  Split,
-  SplitItem,
-  TextInput,
 } from '@patternfly/react-core';
 import JSZip from 'jszip';
 import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
 import {
   useSessionStream,
   type Patch,
-  type Proposal,
-  type SessionStatus,
-  type ProgressEntry,
-  type Tier1Result,
   type SessionResult,
+  type Tier1Result,
 } from '../hooks/useSessionStream';
+import { ScanOptionsForm } from '../components/ScanOptionsForm';
+import { OperationProgressPanel } from '../components/OperationProgressPanel';
+import { ProposalReviewPanel } from '../components/ProposalReviewPanel';
+import { Tier1ResultsPanel } from '../components/Tier1ResultsPanel';
+import { OperationResultCard } from '../components/OperationResultCard';
+import type { OperationStatus, OperationProgress, OperationProposal, OperationResult } from '../types/operation';
+
+function mapSessionStatus(s: string): OperationStatus {
+  if (s === 'uploading') return 'preparing';
+  return s as OperationStatus;
+}
 
 export function PlaygroundPage() {
   const [files, setFiles] = useState<File[]>([]);
@@ -36,11 +36,11 @@ export function PlaygroundPage() {
   const dirInputRef = useRef<HTMLInputElement>(null);
 
   const {
-    status,
-    progress,
+    status: rawStatus,
+    progress: rawProgress,
     scanId,
     tier1,
-    proposals,
+    proposals: rawProposals,
     result,
     error,
     startSession,
@@ -49,15 +49,31 @@ export function PlaygroundPage() {
     reset,
   } = useSessionStream();
 
+  const opStatus = mapSessionStatus(rawStatus);
+  const opProgress: OperationProgress[] = rawProgress.map((p) => ({
+    phase: p.phase,
+    message: p.message,
+    timestamp: p.timestamp,
+  }));
+  const opProposals: OperationProposal[] = rawProposals.map((p) => ({
+    id: p.id,
+    rule_id: p.rule_id,
+    file: p.file,
+    tier: p.tier,
+    confidence: p.confidence,
+    explanation: p.explanation,
+    diff_hunk: p.diff_hunk,
+  }));
+
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragOver(false);
-      if (status !== 'idle') return;
+      if (rawStatus !== 'idle') return;
       const dropped = Array.from(e.dataTransfer.files);
       setFiles((prev) => [...prev, ...dropped]);
     },
-    [status],
+    [rawStatus],
   );
 
   const handleFileSelect = useCallback(
@@ -92,11 +108,7 @@ export function PlaygroundPage() {
     setFiles([]);
   }, [reset]);
 
-  const isRunning =
-    status === 'connecting' ||
-    status === 'uploading' ||
-    status === 'scanning' ||
-    status === 'applying';
+  const isRunning = opStatus === 'connecting' || opStatus === 'preparing' || opStatus === 'scanning' || opStatus === 'applying';
 
   return (
     <PageLayout>
@@ -106,7 +118,7 @@ export function PlaygroundPage() {
       />
 
       <div style={{ padding: '0 24px 24px' }}>
-        {status === 'idle' && (
+        {opStatus === 'idle' && (
           <Card>
             <CardBody>
               <div
@@ -171,40 +183,14 @@ export function PlaygroundPage() {
                 </div>
               )}
 
-              <ExpandableSection toggleText="Advanced Options" style={{ marginTop: 16 }}>
-                <Flex direction={{ default: 'column' }} gap={{ default: 'gapMd' }}>
-                  <FlexItem>
-                    <label htmlFor="ansible-version" style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
-                      Ansible Core Version
-                    </label>
-                    <TextInput
-                      id="ansible-version"
-                      placeholder="e.g. 2.16"
-                      value={ansibleVersion}
-                      onChange={(_e, v) => setAnsibleVersion(v)}
-                    />
-                  </FlexItem>
-                  <FlexItem>
-                    <label htmlFor="collections" style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
-                      Collections (comma-separated)
-                    </label>
-                    <TextInput
-                      id="collections"
-                      placeholder="e.g. ansible.posix, community.general"
-                      value={collections}
-                      onChange={(_e, v) => setCollections(v)}
-                    />
-                  </FlexItem>
-                  <FlexItem>
-                    <Checkbox
-                      id="enable-ai"
-                      label="Enable AI-assisted remediation (Tier 2)"
-                      isChecked={enableAi}
-                      onChange={(_e, checked) => setEnableAi(checked)}
-                    />
-                  </FlexItem>
-                </Flex>
-              </ExpandableSection>
+              <ScanOptionsForm
+                ansibleVersion={ansibleVersion}
+                onAnsibleVersionChange={setAnsibleVersion}
+                collections={collections}
+                onCollectionsChange={setCollections}
+                enableAi={enableAi}
+                onEnableAiChange={setEnableAi}
+              />
 
               <Button
                 variant="primary"
@@ -219,24 +205,24 @@ export function PlaygroundPage() {
         )}
 
         {isRunning && (
-          <ScanProgress status={status} progress={progress} onCancel={cancel} />
+          <OperationProgressPanel status={opStatus} progress={opProgress} onCancel={cancel} />
         )}
 
-        {status === 'tier1_done' && tier1 && (
-          <Tier1Results tier1={tier1} />
+        {rawStatus === 'tier1_done' && tier1 && (
+          <Tier1ResultsPanel tier1={tier1} />
         )}
 
-        {status === 'awaiting_approval' && proposals.length > 0 && (
+        {rawStatus === 'awaiting_approval' && opProposals.length > 0 && (
           <>
-            {tier1 && <Tier1Results tier1={tier1} />}
-            <ProposalApproval proposals={proposals} onApprove={approve} />
+            {tier1 && <Tier1ResultsPanel tier1={tier1} />}
+            <ProposalReviewPanel proposals={opProposals} onApprove={approve} />
           </>
         )}
 
-        {status === 'complete' && result && (
-          <SessionComplete result={result} scanId={scanId} tier1={tier1} />
+        {rawStatus === 'complete' && result && (
+          <SessionComplete result={result} scanId={scanId} tier1={tier1} onReset={handleReset} />
         )}
-        {status === 'complete' && !result && (
+        {rawStatus === 'complete' && !result && (
           <Card style={{ textAlign: 'center', padding: 48 }}>
             <CardBody>
               <div style={{ fontSize: 48, color: 'var(--pf-t--global--color--status--success--default)' }}>&#10003;</div>
@@ -248,7 +234,7 @@ export function PlaygroundPage() {
           </Card>
         )}
 
-        {status === 'error' && (
+        {rawStatus === 'error' && (
           <Card style={{ textAlign: 'center', padding: 48 }}>
             <CardBody>
               <h2 style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>Scan Failed</h2>
@@ -264,177 +250,16 @@ export function PlaygroundPage() {
   );
 }
 
-
-function ScanProgress({
-  status,
-  progress,
-  onCancel,
-}: {
-  status: SessionStatus;
-  progress: ProgressEntry[];
-  onCancel: () => void;
-}) {
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [progress.length]);
-
-  const label =
-    status === 'connecting'
-      ? 'Connecting...'
-      : status === 'uploading'
-        ? 'Uploading files...'
-        : status === 'applying'
-          ? 'Applying approved fixes...'
-          : 'Scanning...';
-
-  return (
-    <Card>
-      <CardBody>
-        <Split hasGutter>
-          <SplitItem isFilled><h2>{label}</h2></SplitItem>
-          <SplitItem><Button variant="secondary" onClick={onCancel}>Cancel</Button></SplitItem>
-        </Split>
-        <Progress value={undefined} style={{ marginTop: 16 }} />
-        <div className="apme-timeline" style={{ marginTop: 16 }}>
-          {progress.map((entry, i) => (
-            <div key={i} className="apme-timeline-entry">
-              <Label isCompact>{entry.phase}</Label>
-              <span style={{ marginLeft: 8 }}>{entry.message}</span>
-            </div>
-          ))}
-          <div ref={endRef} />
-        </div>
-      </CardBody>
-    </Card>
-  );
-}
-
-function Tier1Results({ tier1 }: { tier1: Tier1Result }) {
-  const patchCount = tier1.patches.length;
-  const formatCount = tier1.format_diffs.length;
-  const [expanded, setExpanded] = useState(false);
-
-  if (patchCount === 0 && formatCount === 0) return null;
-
-  return (
-    <Card style={{ marginBottom: 16 }}>
-      <CardBody>
-        <Split hasGutter>
-          <SplitItem>
-            <Label color="green" isCompact>Auto-Fix</Label>
-          </SplitItem>
-          <SplitItem isFilled>
-            <h3>
-              Tier 1 — {patchCount} fix{patchCount !== 1 ? 'es' : ''} applied
-              {formatCount > 0 && `, ${formatCount} formatted`}
-            </h3>
-          </SplitItem>
-          <SplitItem>
-            <Button variant="secondary" onClick={() => setExpanded(!expanded)} size="sm">
-              {expanded ? 'Collapse' : 'Show Diffs'}
-            </Button>
-          </SplitItem>
-        </Split>
-        {expanded && (
-          <div className="apme-tier1-diffs" style={{ marginTop: 16 }}>
-            {tier1.patches.map((p, i) => (
-              <div key={i} className="apme-diff-block">
-                <div className="apme-diff-file">
-                  <span className="apme-file-name">{p.file}</span>
-                  {p.applied_rules.length > 0 && (
-                    <span className="apme-diff-rules">{p.applied_rules.join(', ')}</span>
-                  )}
-                </div>
-                {p.diff && <pre className="apme-diff-content">{p.diff}</pre>}
-              </div>
-            ))}
-          </div>
-        )}
-      </CardBody>
-    </Card>
-  );
-}
-
-function ProposalApproval({
-  proposals,
-  onApprove,
-}: {
-  proposals: Proposal[];
-  onApprove: (ids: string[]) => void;
-}) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-
-  const toggleAll = useCallback(() => {
-    setSelected((prev) =>
-      prev.size === proposals.length
-        ? new Set()
-        : new Set(proposals.map((p) => p.id)),
-    );
-  }, [proposals]);
-
-  const toggle = useCallback((id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const allSelected = selected.size === proposals.length;
-
-  return (
-    <Card>
-      <CardBody>
-        <Split hasGutter style={{ marginBottom: 16 }}>
-          <SplitItem isFilled>
-            <Label color="yellow" isCompact>AI Review</Label>
-            <h3 style={{ marginTop: 4 }}>
-              {proposals.length} AI Proposal{proposals.length !== 1 ? 's' : ''}
-            </h3>
-          </SplitItem>
-          <SplitItem>
-            <Flex gap={{ default: 'gapSm' }}>
-              <Button variant="secondary" onClick={toggleAll} size="sm">
-                {allSelected ? 'Deselect All' : 'Select All'}
-              </Button>
-              <Button variant="link" onClick={() => onApprove([])} size="sm">Skip All</Button>
-              <Button variant="primary" onClick={() => onApprove(Array.from(selected))} size="sm">
-                Apply {selected.size} Selected
-              </Button>
-            </Flex>
-          </SplitItem>
-        </Split>
-        <div className="apme-proposals-list">
-          {proposals.map((p) => (
-            <div
-              key={p.id}
-              className={`apme-proposal-card ${selected.has(p.id) ? 'selected' : ''}`}
-              onClick={() => toggle(p.id)}
-            >
-              <input type="checkbox" checked={selected.has(p.id)} readOnly className="apme-proposal-checkbox" />
-              <span className="apme-rule-id">{p.rule_id}</span>
-              <span className="apme-proposal-file">{p.file}</span>
-              <Label isCompact variant="outline">Tier {p.tier}</Label>
-              <span className="apme-confidence-label">{Math.round(p.confidence * 100)}%</span>
-            </div>
-          ))}
-        </div>
-      </CardBody>
-    </Card>
-  );
-}
-
 function SessionComplete({
   result,
   scanId,
   tier1,
+  onReset,
 }: {
   result: SessionResult;
   scanId: string | null;
   tier1: Tier1Result | null;
+  onReset: () => void;
 }) {
   const totalPatches = result.patches.length + (tier1?.patches.length ?? 0);
   const remaining = result.remaining_violations.length;
@@ -475,48 +300,40 @@ function SessionComplete({
     }
   }, [patchedFiles, scanId]);
 
+  const opResult: OperationResult = {
+    total_violations: remaining,
+    auto_fixable: 0,
+    ai_candidate: 0,
+    manual_review: remaining,
+    fixed_count: totalPatches,
+  };
+
   return (
-    <Card style={{ textAlign: 'center', padding: 32 }}>
-      <CardBody>
-        <div style={{ fontSize: 48, color: 'var(--pf-t--global--color--status--success--default)' }}>&#10003;</div>
-        <h2>Scan Complete</h2>
-        <Split hasGutter style={{ justifyContent: 'center', margin: '16px 0' }}>
-          <SplitItem>
-            <div style={{ fontSize: 32, fontWeight: 700, color: 'var(--pf-t--global--color--status--success--default)' }}>{totalPatches}</div>
-            <div style={{ opacity: 0.7 }}>Fixed</div>
-          </SplitItem>
-          <SplitItem>
-            <div style={{
-              fontSize: 32,
-              fontWeight: 700,
-              color: remaining > 0
-                ? 'var(--pf-t--global--color--status--warning--default)'
-                : 'var(--pf-t--global--color--status--success--default)',
-            }}>
-              {remaining}
-            </div>
-            <div style={{ opacity: 0.7 }}>Remaining</div>
-          </SplitItem>
-        </Split>
-        {patchedFiles.size > 0 && (
-          <Button variant="primary" onClick={handleDownload} isDisabled={downloading} style={{ marginBottom: 16 }}>
-            {downloading ? 'Preparing...' : `Download Fixed Files (${patchedFiles.size})`}
-          </Button>
-        )}
-        {remaining > 0 && (
-          <ExpandableSection toggleText={`Remaining Violations (${remaining})`} style={{ textAlign: 'left', maxWidth: 700, margin: '8px auto 0' }}>
-            <div className="apme-remaining-list">
-              {result.remaining_violations.map((v, i) => (
-                <div key={i} className="apme-remaining-item">
-                  <span className="apme-rule-id">{v.rule_id}</span>
-                  <span className="apme-file-name">{v.file}</span>
-                  <span>{v.message}</span>
-                </div>
-              ))}
-            </div>
-          </ExpandableSection>
-        )}
-      </CardBody>
-    </Card>
+    <OperationResultCard
+      result={opResult}
+      onDismiss={onReset}
+      actions={
+        <>
+          {patchedFiles.size > 0 && (
+            <Button variant="primary" onClick={handleDownload} isDisabled={downloading}>
+              {downloading ? 'Preparing...' : `Download Fixed Files (${patchedFiles.size})`}
+            </Button>
+          )}
+          {remaining > 0 && (
+            <ExpandableSection toggleText={`Remaining Violations (${remaining})`} style={{ textAlign: 'left', maxWidth: 700, margin: '8px auto 0' }}>
+              <div className="apme-remaining-list">
+                {result.remaining_violations.map((v, i) => (
+                  <div key={i} className="apme-remaining-item">
+                    <span className="apme-rule-id">{v.rule_id}</span>
+                    <span className="apme-file-name">{v.file}</span>
+                    <span>{v.message}</span>
+                  </div>
+                ))}
+              </div>
+            </ExpandableSection>
+          )}
+        </>
+      }
+    />
   );
 }

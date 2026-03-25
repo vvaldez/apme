@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timezone
 from typing import cast
@@ -11,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from apme_gateway.db.models import Project, Proposal, Scan, ScanLog, Session, Violation
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Project queries (ADR-037)
@@ -299,6 +302,42 @@ async def project_top_violations(
     )
     result = await db.execute(stmt)
     return [(row[0], row[1]) for row in result.all()]
+
+
+async def link_scan_to_project(
+    db: AsyncSession,
+    scan_id: str,
+    project_id: str,
+    trigger: str = "ui",
+) -> bool:
+    """Associate a scan record with a project after completion.
+
+    Called by the project WebSocket handler once the gRPC reporting servicer
+    has persisted the scan row (which defaults to ``project_id=None``).
+
+    Args:
+        db: Active async database session.
+        scan_id: UUID of the scan to update.
+        project_id: UUID of the owning project.
+        trigger: Origin of the scan (``ui`` or ``playground``).
+
+    Returns:
+        True if the scan row was found and updated, False otherwise.
+    """
+    stmt = select(Scan).where(Scan.scan_id == scan_id)
+    result = await db.execute(stmt)
+    scan = result.scalar_one_or_none()
+    if scan is None:
+        logger.warning(
+            "link_scan_to_project: scan row %s not found for project %s",
+            scan_id,
+            project_id,
+        )
+        return False
+    scan.project_id = project_id
+    scan.trigger = trigger
+    await db.commit()
+    return True
 
 
 async def update_project_health(db: AsyncSession, project_id: str) -> int:

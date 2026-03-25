@@ -851,42 +851,109 @@ async def project_operate_ws(
 
         cfg = load_config()
 
-        async def _progress_cb(event: object) -> None:
-            """Translate gRPC events into ADR-037 WebSocket messages.
+        op_scan_id = uuid.uuid4().hex
+        started_sent = False
 
-            Inspects the event for known attributes and sends structured
-            messages that match the frontend ``useProjectOperation`` hook.
+        async def _progress_cb(event: object) -> None:
+            """Translate gRPC protobuf events into typed WebSocket messages.
+
+            Uses ``WhichOneof`` (SessionEvent for fix) or ``HasField``
+            (ScanEvent for scan) to detect the event kind and emit the
+            structured messages the frontend hooks expect.
 
             Args:
-                event: gRPC ScanEvent or SessionEvent.
+                event: gRPC ScanEvent or SessionEvent protobuf.
             """
-            event_type = getattr(event, "type", None) or getattr(event, "event_type", None)
-            phase = getattr(event, "phase", None)
-            message = getattr(event, "message", None) or getattr(event, "detail", None) or str(event)
+            nonlocal started_sent
 
-            if isinstance(event_type, str):
-                payload: dict[str, object] = {"type": event_type}
-                if phase is not None:
-                    payload["phase"] = str(phase)
-                payload["message"] = str(message)
-            else:
-                payload = {
-                    "type": "progress",
-                    "phase": str(phase) if phase else "processing",
-                    "message": str(message),
-                }
-            await websocket.send_json(payload)
+            kind = None
+            with contextlib.suppress(Exception):
+                kind = event.WhichOneof("event")  # type: ignore[attr-defined]
+
+            if kind == "progress":
+                if not started_sent:
+                    started_sent = True
+                    await websocket.send_json({"type": "started", "scan_id": op_scan_id})
+                prog = event.progress  # type: ignore[attr-defined]
+                await websocket.send_json(
+                    {
+                        "type": "progress",
+                        "phase": prog.phase or "processing",
+                        "message": prog.message or "",
+                    }
+                )
+            elif kind == "proposals":
+                props = event.proposals  # type: ignore[attr-defined]
+                items = [
+                    {
+                        "id": p.id,
+                        "rule_id": p.rule_id,
+                        "file": p.file,
+                        "tier": p.tier,
+                        "confidence": p.confidence,
+                        "explanation": p.explanation,
+                        "diff_hunk": p.diff_hunk,
+                    }
+                    for p in props.proposals
+                ]
+                await websocket.send_json({"type": "proposals", "proposals": items})
+            elif kind == "approval_ack":
+                await websocket.send_json({"type": "approval_ack"})
+            elif kind == "result":
+                res = event.result  # type: ignore[attr-defined]
+                report = getattr(res, "report", None)
+                remaining = getattr(res, "remaining_violations", [])
+                total = len(remaining) + (report.fixed if report else 0)
+                await websocket.send_json(
+                    {
+                        "type": "result",
+                        "total_violations": total,
+                        "auto_fixable": 0,
+                        "ai_candidate": report.remaining_ai if report else 0,
+                        "manual_review": report.remaining_manual if report else 0,
+                        "fixed_count": report.fixed if report else 0,
+                    }
+                )
+            elif kind is None and hasattr(event, "HasField"):
+                if not started_sent:
+                    started_sent = True
+                    await websocket.send_json({"type": "started", "scan_id": op_scan_id})
+                with contextlib.suppress(Exception):
+                    if event.HasField("progress"):
+                        prog = event.progress  # type: ignore[attr-defined]
+                        await websocket.send_json(
+                            {
+                                "type": "progress",
+                                "phase": prog.phase or "processing",
+                                "message": prog.message or "",
+                            }
+                        )
+                    elif event.HasField("result"):
+                        res = event.result  # type: ignore[attr-defined]
+                        summary = getattr(res, "summary", None)
+                        await websocket.send_json(
+                            {
+                                "type": "result",
+                                "total_violations": summary.total if summary else 0,
+                                "auto_fixable": summary.auto_fixable if summary else 0,
+                                "ai_candidate": summary.ai_candidate if summary else 0,
+                                "manual_review": summary.manual_review if summary else 0,
+                            }
+                        )
 
         raw_specs = options.get("collection_specs", [])
         specs = [str(s) for s in raw_specs] if isinstance(raw_specs, list) else []
 
         await websocket.send_json({"type": "cloning"})
 
+        completed_scan_id: str | None = None
+
         if is_fix:
             approval_queue: asyncio.Queue[list[str]] = asyncio.Queue()
+            fix_result: tuple[str, object] | None = None
 
-            async def _run_fix() -> None:
-                await run_project_fix(
+            async def _run_fix() -> tuple[str, object]:
+                return await run_project_fix(
                     project_id=proj.id,
                     repo_url=proj.repo_url,
                     branch=proj.branch,
@@ -897,6 +964,7 @@ async def project_operate_ws(
                     ai_model=str(options.get("ai_model", "")),
                     progress_callback=_progress_cb,
                     approval_queue=approval_queue,
+                    scan_id=op_scan_id,
                 )
 
             fix_task = asyncio.create_task(_run_fix())
@@ -921,10 +989,13 @@ async def project_operate_ws(
             finally:
                 if not fix_task.done():
                     fix_task.cancel()
-                with contextlib.suppress(Exception):
-                    await fix_task
+                with contextlib.suppress(asyncio.CancelledError):
+                    fix_result = await fix_task
+
+            if fix_result is not None:
+                completed_scan_id = fix_result[0]
         else:
-            await run_project_scan(
+            scan_id, _result = await run_project_scan(
                 project_id=proj.id,
                 repo_url=proj.repo_url,
                 branch=proj.branch,
@@ -932,7 +1003,14 @@ async def project_operate_ws(
                 ansible_version=str(options.get("ansible_version", "")),
                 collection_specs=specs,
                 progress_callback=_progress_cb,
+                scan_id=op_scan_id,
             )
+            completed_scan_id = scan_id
+
+        if completed_scan_id:
+            async with get_session() as db:
+                await q.link_scan_to_project(db, completed_scan_id, proj.id, trigger="ui")
+                await q.update_project_health(db, proj.id)
 
         await websocket.send_json({"type": "closed"})
     except WebSocketDisconnect:

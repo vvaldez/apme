@@ -18,6 +18,7 @@ import {
   SplitItem,
   TextInput,
 } from '@patternfly/react-core';
+import { SearchIcon } from '@patternfly/react-icons';
 import { createProject, listProjects } from '../services/api';
 import type { ProjectSummary } from '../types/api';
 import { timeAgo } from '../services/format';
@@ -125,6 +126,19 @@ export function ProjectsPage() {
                             <span style={{ opacity: 0.7 }}>
                               {proj.last_scanned_at ? timeAgo(proj.last_scanned_at) : 'Never scanned'}
                             </span>
+                          </FlexItem>
+                          <FlexItem>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon={<SearchIcon />}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/projects/${proj.id}?action=scan`);
+                              }}
+                            >
+                              Scan
+                            </Button>
                           </FlexItem>
                         </Flex>
                       </SplitItem>
