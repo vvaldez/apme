@@ -205,7 +205,7 @@ Deploying a plugin to one pod means deploying it to all pods. Removing a plugin 
 
 - **Startup ordering dependency** — Gateway cannot show the rule management UI or send overrides until the authority Primary has registered. Mitigated: the Gateway already can't scan until an engine is up.
 - **Single authority limitation** — in early multi-pod deployments, accidental dual-authority (two Primaries both marked as authority with different rule sets) would cause catalog thrashing. Mitigated: operational discipline and eventual conflict detection.
-- **Proto change** — adding `RuleOverride` to `ScanOptions` and a registration RPC requires proto regeneration and coordinated deployment.
+- **Proto change** — adding `RuleConfig` to `ScanOptions` and a registration RPC requires proto regeneration and coordinated deployment.
 
 ### Neutral
 
@@ -224,7 +224,7 @@ Deploying a plugin to one pod means deploying it to all pods. Removing a plugin 
 
 ### Phase 2: Override delivery
 
-1. Add `RuleOverride` message and `repeated RuleOverride rule_overrides` to `ScanOptions` in `primary.proto`
+1. Add `RuleConfig` message and `repeated RuleConfig rule_configs` to `ScanOptions` in `primary.proto`
 2. Primary applies overrides: filters disabled rules, attaches severity overrides to violations
 3. Gateway sends overrides with each `ScanRequest` from its stored override config
 4. CLI reads overrides from `.apme/rules.yml` and passes them in `ScanOptions`
