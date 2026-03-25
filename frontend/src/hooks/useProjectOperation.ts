@@ -29,6 +29,8 @@ export interface ProjectProposal {
   file: string;
   tier: number;
   confidence: number;
+  explanation?: string;
+  diff_hunk?: string;
 }
 
 export interface ProjectOperationResult {
@@ -36,6 +38,7 @@ export interface ProjectOperationResult {
   auto_fixable: number;
   ai_candidate: number;
   manual_review: number;
+  fixed_count?: number;
 }
 
 export interface ProjectOperationOptions {

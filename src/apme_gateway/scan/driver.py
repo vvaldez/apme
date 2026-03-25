@@ -99,7 +99,7 @@ async def run_project_scan(
     ansible_version: str = "",
     collection_specs: list[str] | None = None,
     progress_callback: ProgressCallback | None = None,
-) -> primary_pb2.ScanResponse | None:
+) -> tuple[str, primary_pb2.ScanResponse | None]:
     """Clone a project repo and run a scan via Primary ScanStream.
 
     Args:
@@ -112,7 +112,7 @@ async def run_project_scan(
         progress_callback: Optional async callable invoked for each ScanEvent.
 
     Returns:
-        The final ScanResponse, or None if no result was received.
+        Tuple of (scan_id, ScanResponse or None).
     """
     scan_id = uuid.uuid4().hex
     session_id = derive_session_id(project_id)
@@ -151,7 +151,7 @@ async def run_project_scan(
                 if event.HasField("result"):
                     result = event.result
 
-            return result
+            return scan_id, result
         finally:
             await channel.close(grace=None)
 
@@ -171,7 +171,7 @@ async def run_project_fix(
     ai_model: str = "",
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
-) -> primary_pb2.ScanResponse | None:
+) -> tuple[str, primary_pb2.ScanResponse | None]:
     """Clone a project repo and run a fix session via Primary FixSession.
 
     Args:
@@ -187,7 +187,7 @@ async def run_project_fix(
         approval_queue: Queue where approved proposal IDs are placed by the UI.
 
     Returns:
-        Final ScanResponse or None.
+        Tuple of (scan_id, ScanResponse or None).
     """
     scan_id = uuid.uuid4().hex
     session_id = derive_session_id(project_id)
@@ -256,7 +256,7 @@ async def run_project_fix(
                     await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
                     await command_queue.put(None)
 
-            return result
+            return scan_id, result
         finally:
             await channel.close(grace=None)
 

@@ -105,7 +105,7 @@ async def test_run_project_scan_full_flow() -> None:
             "apme_gateway.scan.driver.primary_pb2_grpc.PrimaryStub",
             return_value=mock_stub,
         ):
-            result = await run_project_scan(
+            scan_id, result = await run_project_scan(
                 project_id="test-proj",
                 repo_url="https://github.com/test/repo.git",
                 branch="main",
@@ -114,4 +114,6 @@ async def test_run_project_scan_full_flow() -> None:
             )
 
         mock_clone.assert_called_once()
+        assert scan_id is not None
+        assert len(scan_id) == 32
         assert result is not None

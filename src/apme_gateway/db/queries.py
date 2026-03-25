@@ -301,6 +301,32 @@ async def project_top_violations(
     return [(row[0], row[1]) for row in result.all()]
 
 
+async def link_scan_to_project(
+    db: AsyncSession,
+    scan_id: str,
+    project_id: str,
+    trigger: str = "ui",
+) -> None:
+    """Associate a scan record with a project after completion.
+
+    Called by the project WebSocket handler once the gRPC reporting servicer
+    has persisted the scan row (which defaults to ``project_id=None``).
+
+    Args:
+        db: Active async database session.
+        scan_id: UUID of the scan to update.
+        project_id: UUID of the owning project.
+        trigger: Origin of the scan (``ui`` or ``playground``).
+    """
+    stmt = select(Scan).where(Scan.scan_id == scan_id)
+    result = await db.execute(stmt)
+    scan = result.scalar_one_or_none()
+    if scan is not None:
+        scan.project_id = project_id
+        scan.trigger = trigger
+        await db.commit()
+
+
 async def update_project_health(db: AsyncSession, project_id: str) -> int:
     """Recompute and persist health score from the latest scan.
 
