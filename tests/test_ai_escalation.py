@@ -157,53 +157,47 @@ class TestAIProposal:
     """Tests for the updated AIProposal dataclass."""
 
     def test_rule_ids_property(self) -> None:
-        """rule_ids returns list of patch rule IDs."""
-        patches = [
-            AIPatch("L026", 1, 2, "x\n", "a", 0.9),
-            AIPatch("M001", 5, 6, "y\n", "b", 0.8),
-        ]
+        """rule_ids field contains the rules addressed."""
         proposal = AIProposal(
             file="test.yml",
-            original_yaml="orig\n",
-            fixed_yaml="fixed\n",
-            patches=patches,
+            original_snippet="orig\n",
+            fixed_snippet="fixed\n",
             diff="diff",
+            rule_ids=["L026", "M001"],
         )
         assert proposal.rule_ids == ["L026", "M001"]
 
-    def test_confidence_property(self) -> None:
-        """Confidence returns minimum across patches."""
-        patches = [
-            AIPatch("A", 1, 1, "x\n", "a", 0.95),
-            AIPatch("B", 3, 3, "y\n", "b", 0.7),
-        ]
+    def test_confidence_field(self) -> None:
+        """Confidence field stores the value."""
         proposal = AIProposal(
             file="t.yml",
-            original_yaml="",
-            fixed_yaml="",
-            patches=patches,
+            original_snippet="a\n",
+            fixed_snippet="b\n",
             diff="",
+            confidence=0.7,
         )
         assert proposal.confidence == 0.7
 
-    def test_confidence_empty_patches(self) -> None:
-        """Confidence returns 0.0 when no patches."""
+    def test_apply_content_based(self) -> None:
+        """Apply replaces original snippet in current file content."""
         proposal = AIProposal(
             file="t.yml",
-            original_yaml="",
-            fixed_yaml="",
-            patches=[],
+            original_snippet="- shell: hostname\n",
+            fixed_snippet="- name: Get hostname\n  ansible.builtin.command: hostname\n",
             diff="",
         )
-        assert proposal.confidence == 0.0
+        content = "---\n- hosts: all\n  tasks:\n    - shell: hostname\n    - debug: msg=hi\n"
+        result = proposal.apply(content)
+        assert "ansible.builtin.command: hostname" in result
+        assert "- shell: hostname" not in result
+        assert "debug: msg=hi" in result
 
     def test_skipped_defaults_to_empty(self) -> None:
         """Skipped defaults to empty list."""
         proposal = AIProposal(
             file="t.yml",
-            original_yaml="",
-            fixed_yaml="",
-            patches=[],
+            original_snippet="a\n",
+            fixed_snippet="b\n",
             diff="",
         )
         assert proposal.skipped == []
@@ -213,9 +207,8 @@ class TestAIProposal:
         skipped = [AISkipped("P002", 10, "Cannot fix", "Do it manually")]
         proposal = AIProposal(
             file="t.yml",
-            original_yaml="",
-            fixed_yaml="",
-            patches=[],
+            original_snippet="a\n",
+            fixed_snippet="b\n",
             diff="",
             skipped=skipped,
         )

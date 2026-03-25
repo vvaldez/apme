@@ -381,27 +381,19 @@ class TestBuildProposals:
     """Unit tests for _build_proposals_from_ai."""
 
     def test_converts_ai_proposals_to_protos(self) -> None:
-        """AIProposal patches become Proposal protos with diff data."""
+        """AIProposal with snippets become Proposal protos."""
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.remediation.ai_provider import AIPatch, AIProposal
+        from apme_engine.remediation.ai_provider import AIProposal
 
         ai_proposals = [
             AIProposal(
                 file="a.yml",
-                original_yaml="line1\nline2\nline3\n",
-                fixed_yaml="line1\nfixed2\nline3\n",
-                patches=[
-                    AIPatch(
-                        rule_id="L001",
-                        line_start=2,
-                        line_end=2,
-                        fixed_lines="fixed2\n",
-                        explanation="Fixed line 2",
-                        confidence=0.95,
-                        diff_hunk="@@ -2 +2 @@\n-line2\n+fixed2",
-                    ),
-                ],
-                diff="",
+                original_snippet="line2\n",
+                fixed_snippet="fixed2\n",
+                diff="@@ -2 +2 @@\n-line2\n+fixed2",
+                rule_ids=["L001"],
+                confidence=0.95,
+                explanation="Fixed line 2",
             ),
         ]
         proposals = PrimaryServicer._build_proposals_from_ai(ai_proposals)
@@ -410,8 +402,6 @@ class TestBuildProposals:
         assert proposals[0].id == "t2-0000"
         assert proposals[0].file == "a.yml"
         assert proposals[0].rule_id == "L001"
-        assert proposals[0].line_start == 2
-        assert proposals[0].line_end == 2
         assert proposals[0].before_text == "line2\n"
         assert proposals[0].after_text == "fixed2\n"
         assert proposals[0].confidence == pytest.approx(0.95)

@@ -1432,35 +1432,32 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         from apme_engine.remediation.ai_provider import AIProposal  # noqa: PLC0415
 
         proposals: list[Proposal] = []
-        idx = 0
-        for item in ai_proposals:
+        for idx, item in enumerate(ai_proposals):
             ap: AIProposal = item  # type: ignore[assignment]
-            orig_lines = ap.original_yaml.splitlines(keepends=True)
-            for patch in ap.patches:
-                start_idx = patch.line_start - 1
-                end_idx = patch.line_end
-                before_text = "".join(orig_lines[start_idx:end_idx])
 
-                after_text = patch.fixed_lines
-                if before_text.endswith("\n") and after_text and not after_text.endswith("\n"):
-                    after_text += "\n"
+            before_text = ap.original_snippet
+            after_text = ap.fixed_snippet
+            if before_text.endswith("\n") and after_text and not after_text.endswith("\n"):
+                after_text += "\n"
 
-                proposals.append(
-                    Proposal(
-                        id=f"t2-{idx:04d}",
-                        file=ap.file,
-                        rule_id=patch.rule_id,
-                        line_start=patch.line_start,
-                        line_end=patch.line_end,
-                        before_text=before_text,
-                        after_text=after_text,
-                        diff_hunk=patch.diff_hunk,
-                        confidence=patch.confidence,
-                        explanation=patch.explanation,
-                        tier=2,
-                    )
+            rule_id = ",".join(ap.rule_ids) if ap.rule_ids else "ai-fix"
+            first_patch = ap.patches[0] if ap.patches else None
+
+            proposals.append(
+                Proposal(
+                    id=f"t2-{idx:04d}",
+                    file=ap.file,
+                    rule_id=rule_id,
+                    line_start=first_patch.line_start if first_patch else 0,
+                    line_end=first_patch.line_end if first_patch else 0,
+                    before_text=before_text,
+                    after_text=after_text,
+                    diff_hunk=ap.diff,
+                    confidence=ap.confidence,
+                    explanation=ap.explanation,
+                    tier=2,
                 )
-                idx += 1
+            )
         return proposals
 
     @staticmethod

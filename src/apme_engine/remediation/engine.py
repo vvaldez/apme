@@ -23,7 +23,6 @@ from apme_engine.remediation.ai_provider import (
     AIProvider,
     AISkipped,
     apply_patches,
-    generate_patch_hunks,
 )
 from apme_engine.remediation.enrich import enrich_violations
 from apme_engine.remediation.partition import (
@@ -566,9 +565,9 @@ class RemediationEngine:
                 continue
 
             patch = patches[0]
+            fixed_snippet = patch.fixed_lines
 
-            generate_patch_hunks(file_content, patches, file_path)
-            patched_content = apply_patches(file_content, patches)
+            patched_content = file_content.replace(unit.snippet, fixed_snippet, 1)
             unit_diff = "".join(
                 difflib.unified_diff(
                     file_content.splitlines(keepends=True),
@@ -577,6 +576,8 @@ class RemediationEngine:
                     tofile=f"b/{file_path} (AI proposed)",
                 )
             )
+
+            rule_ids = [r.strip() for r in patch.rule_id.split(",")]
 
             for v in unit.violations:
                 rid = str(v.get("rule_id", ""))
@@ -590,11 +591,16 @@ class RemediationEngine:
             proposals.append(
                 AIProposal(
                     file=file_path,
+                    original_snippet=unit.snippet,
+                    fixed_snippet=fixed_snippet,
+                    diff=unit_diff,
+                    rule_ids=rule_ids,
+                    confidence=patch.confidence,
+                    explanation=patch.explanation,
+                    skipped=skipped,
                     original_yaml=file_content,
                     fixed_yaml=patched_content,
                     patches=patches,
-                    diff=unit_diff,
-                    skipped=skipped,
                 )
             )
 
