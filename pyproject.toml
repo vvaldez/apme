@@ -102,7 +102,6 @@ ignore-var-parameters = true
 
 [tool.ruff.lint.per-file-ignores]
 "src/apme_engine/engine/annotators/ansible.builtin/*.py" = ["E501"]
-"scripts/generate_deprecation_rules.py" = ["E501"]
 
 [tool.mypy]
 strict = true
@@ -158,10 +157,9 @@ module = [
 ]
 ignore_missing_imports = true
 
-# Deprecation pipeline scripts use untyped JSON dicts extensively.
+# Deprecation scraper uses untyped JSON dicts extensively.
 [[tool.mypy.overrides]]
 module = [
-    "generate_deprecation_rules",
     "scrape_ansible_deprecations",
 ]
 disallow_any_explicit = false

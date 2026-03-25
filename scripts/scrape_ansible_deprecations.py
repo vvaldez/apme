@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Scrape ansible-core devel branch for version-gated deprecation notices.
+"""Scrape ansible-core devel branch for deprecation notices and identify gaps.
 
 Clones (or updates) the ansible/ansible devel branch into a local cache,
-then extracts all deprecation patterns using three detection mechanisms:
+extracts all deprecation patterns, compares them against the existing APME
+rule inventory, and outputs a gap report for any deprecations that lack a
+corresponding rule.
 
-  1. display.deprecated() calls — active runtime warnings
-  2. # deprecated: comments — staged deprecations not yet active
-  3. _tags.Deprecated() — tag-based deprecation system (2.19+)
-
-Output is written to a machine-readable JSON file that can be consumed by
-``generate_deprecation_rules.py`` to scaffold APME M-rules.
+The gap report is written as JSON to stdout (suitable for piping into a
+GitHub Actions step that creates an issue) and optionally as a human-readable
+markdown file.
 
 Usage:
-    python scripts/scrape_ansible_deprecations.py [--output PATH] [--cache-dir PATH]
-
-The default output is ``src/apme_engine/data/deprecations.json``.
+    python scripts/scrape_ansible_deprecations.py
+    python scripts/scrape_ansible_deprecations.py --min-version 2.21 --audience content
+    python scripts/scrape_ansible_deprecations.py --output-json /tmp/gaps.json
+    python scripts/scrape_ansible_deprecations.py --skip-clone --cache-dir /tmp/ansible
 """
 
 from __future__ import annotations
@@ -32,34 +32,34 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT = REPO_ROOT / "src" / "apme_engine" / "data" / "deprecations.json"
 DEFAULT_CACHE = REPO_ROOT / ".cache" / "ansible-core"
 ANSIBLE_REPO = "https://github.com/ansible/ansible.git"
 ANSIBLE_LIB = "lib/ansible"
 
+# Rule inventory paths
+OPA_BUNDLE = REPO_ROOT / "src" / "apme_engine" / "validators" / "opa" / "bundle"
+NATIVE_RULES = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
+ANSIBLE_RULES = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "rules"
+
 # ── Regex patterns for deprecation extraction ────────────────────────
 
-# display.deprecated("message", version="X.YZ") — handles f-strings,
-# concatenated strings, and multi-line calls.
 _DEPRECATED_CALL = re.compile(
     r"""display\.deprecated\(\s*
-        (?P<quote>["']{1,3})(?P<message>.*?)(?P=quote)  # message string
-        [^)]*?                                            # everything before closing
-        version\s*=\s*["'](?P<version>[\d.]+)["']         # version="2.23"
+        (?P<quote>["']{1,3})(?P<message>.*?)(?P=quote)
+        [^)]*?
+        version\s*=\s*["'](?P<version>[\d.]+)["']
     """,
     re.VERBOSE | re.DOTALL,
 )
 
-# Alternate form: version is the second positional arg.
 _DEPRECATED_CALL_POS = re.compile(
     r"""display\.deprecated\(\s*
         (?P<quote>["']{1,3})(?P<message>.*?)(?P=quote)\s*,\s*
-        ["'](?P<version>[\d.]+)["']                        # positional version
+        ["'](?P<version>[\d.]+)["']
     """,
     re.VERBOSE | re.DOTALL,
 )
 
-# display.deprecated("message", date=datetime.date(Y, M, D))
 _DEPRECATED_DATE_CALL = re.compile(
     r"""display\.deprecated\(\s*
         (?P<quote>["']{1,3})(?P<message>.*?)(?P=quote)
@@ -69,24 +69,20 @@ _DEPRECATED_DATE_CALL = re.compile(
     re.VERBOSE | re.DOTALL,
 )
 
-# # deprecated: <version> — staged comment-based deprecation
 _DEPRECATED_COMMENT = re.compile(
     r"#\s*deprecated:\s*(?P<version>[\d.]+)\s*(?:[-—:]\s*(?P<note>.*))?",
     re.IGNORECASE,
 )
 
-# _tags.Deprecated(version="X.Y")
 _DEPRECATED_TAG = re.compile(
     r"_tags\.Deprecated\(\s*(?:version\s*=\s*)?[\"'](?P<version>[\d.]+)[\"']",
 )
 
-# collection_name kwarg
 _COLLECTION_NAME = re.compile(
     r"collection_name\s*=\s*[\"'](?P<collection>[^\"']+)[\"']",
 )
 
-
-# ── Audience and detectability classification ────────────────────────
+# ── Audience classification ──────────────────────────────────────────
 
 _CONTENT_PATHS = [
     "parsing/mod_args",
@@ -177,62 +173,14 @@ _DEV_KW = [
     "_encode_script",
 ]
 
-_STATIC_SIGS = {
-    "paramiko_ssh": "connection: paramiko_ssh in plays/host vars",
-    "paramiko": "connection: paramiko_ssh in plays/host vars",
-    "follow_redirects": "follow_redirects: yes/no in lookup args",
-    "!!omap": "!!omap YAML tag in content",
-    "!!pairs": "!!pairs YAML tag in content",
-    "!vault-encrypted": "!vault-encrypted tag in YAML",
-    "vault-encrypted": "!vault-encrypted tag in YAML",
-    "empty conditional": "when: with empty/null value",
-    "when:": "when condition pattern",
-    "empty when": "when: with empty/null value",
-    "action:": "action: with dict value in task",
-    "action as a mapping": "action: with dict value in task",
-    "empty args": "empty args: keyword in task",
-    "play_hosts": "play_hosts variable in Jinja2",
-    "ansible_hostname": "ansible_* fact variables in Jinja2",
-    "inject_facts": "top-level fact injection",
-    "tree": "callback plugin reference",
-    "oneline": "callback plugin reference",
-    "include_vars": "include_vars parameter patterns",
-    "ignore_files": "include_vars ignore_files pattern",
-    "first_found": "first_found lookup terms",
-    "variable name": "variable naming validation",
-    "k=v": "legacy k=v argument merging",
-    "_meta": "inventory script _meta.hostvars",
-    "strategy plugin": "third-party strategy plugin",
-}
-
-_RUNTIME_KW = [
-    "runtime",
-    "data type",
-    "non-string input",
-    "non-boolean",
-    "return value",
-    "filter coercing",
-    "encoding",
-]
-
 
 def _classify_audience(filepath: str, message: str) -> str:
-    """Classify whether a deprecation targets content authors or plugin devs.
-
-    Args:
-        filepath: Relative path under lib/ansible for the deprecation source.
-        message: Deprecation message text used for keyword heuristics.
-
-    Returns:
-        ``content``, ``developer``, or ``unknown`` audience label.
-    """
     for p in _CONTENT_PATHS:
         if p in filepath:
             return "content"
     for p in _DEV_PATHS:
         if p in filepath:
             return "developer"
-
     msg_lower = message.lower()
     for kw in _CONTENT_KW:
         if kw in msg_lower:
@@ -243,40 +191,7 @@ def _classify_audience(filepath: str, message: str) -> str:
     return "unknown"
 
 
-def _classify_detectable(filepath: str, message: str) -> tuple[bool | None, str]:
-    """Classify whether APME can detect this deprecation statically.
-
-    Args:
-        filepath: Relative path under lib/ansible for the deprecation source.
-        message: Deprecation message text to match against static/runtime hints.
-
-    Returns:
-        Pair of static detectability (``True``/``False``/``None``) and hint string.
-    """
-    msg_lower = message.lower()
-
-    for sig, hint in _STATIC_SIGS.items():
-        if sig in msg_lower:
-            return True, hint
-
-    for kw in _RUNTIME_KW:
-        if kw in msg_lower:
-            return False, "Depends on runtime data"
-
-    return None, ""
-
-
 def _fingerprint(source_file: str, line_number: int, message: str) -> str:
-    """Stable hash for deduplication across scrape runs.
-
-    Args:
-        source_file: Relative path of the source file.
-        line_number: 1-based line number of the deprecation.
-        message: Deprecation message (first 80 chars participate in the hash).
-
-    Returns:
-        12-character hex SHA-256 digest prefix.
-    """
     raw = f"{source_file}:{line_number}:{message[:80]}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
@@ -298,8 +213,6 @@ class DeprecationEntry:
         context_lines: Surrounding source lines for context.
         collection_name: Declaring collection (default ansible.builtin).
         audience: content, developer, or unknown.
-        statically_detectable: Whether APME can detect it statically, if known.
-        detection_hint: Short hint when statically detectable or why not.
     """
 
     source_file: str
@@ -311,53 +224,13 @@ class DeprecationEntry:
     context_lines: list[str] = field(default_factory=list)
     collection_name: str = "ansible.builtin"
     audience: str = "unknown"
-    statically_detectable: bool | None = None
-    detection_hint: str = ""
-
-
-@dataclass
-class ScrapeResult:
-    """Complete scrape output with metadata.
-
-    Attributes:
-        scraped_at: UTC ISO-8601 timestamp of the scrape.
-        commit: ansible/ansible HEAD commit hash.
-        branch: Git branch that was scraped.
-        ansible_core_version: Value from lib/ansible/release.py or unknown.
-        total_deprecations: Count of deprecation records after filtering.
-        by_version: Counts keyed by removal_version.
-        by_mechanism: Counts keyed by mechanism.
-        by_audience: Counts keyed by audience.
-        deprecations: List of deprecation dicts (asdict of DeprecationEntry).
-    """
-
-    scraped_at: str
-    commit: str
-    branch: str
-    ansible_core_version: str
-    total_deprecations: int
-    by_version: dict[str, int]
-    by_mechanism: dict[str, int]
-    by_audience: dict[str, int]
-    deprecations: list[dict[str, Any]]
 
 
 # ── Git helpers ──────────────────────────────────────────────────────
 
 
 def _run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess and return the result.
-
-    Args:
-        cmd: Executable and arguments passed to subprocess.run.
-        **kwargs: Extra arguments forwarded to subprocess.run.
-
-    Returns:
-        CompletedProcess from a successful run (raises on non-zero exit).
-    """
-    return subprocess.run(  # type: ignore[call-overload,no-any-return]
-        cmd, check=True, capture_output=True, text=True, **kwargs
-    )
+    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kwargs)  # type: ignore[call-overload,no-any-return]
 
 
 def clone_or_update(cache_dir: Path, branch: str = "devel") -> Path:
@@ -368,7 +241,7 @@ def clone_or_update(cache_dir: Path, branch: str = "devel") -> Path:
         branch: Remote branch to check out (default devel).
 
     Returns:
-        Absolute path to the repository root (same as cache_dir).
+        Absolute path to the repository root.
     """
     if cache_dir.exists() and (cache_dir / ".git").exists():
         print(f"Updating existing clone at {cache_dir}…", file=sys.stderr)
@@ -400,10 +273,9 @@ def get_commit(repo_dir: Path) -> str:
         repo_dir: Root of the git checkout.
 
     Returns:
-        Full 40-character commit SHA from ``git rev-parse HEAD``.
+        Full 40-character commit SHA.
     """
-    result = _run(["git", "rev-parse", "HEAD"], cwd=repo_dir)
-    return result.stdout.strip()
+    return _run(["git", "rev-parse", "HEAD"], cwd=repo_dir).stdout.strip()
 
 
 def get_ansible_version(repo_dir: Path) -> str:
@@ -428,16 +300,6 @@ def get_ansible_version(repo_dir: Path) -> str:
 
 
 def _get_context(lines: list[str], line_idx: int, window: int = 3) -> list[str]:
-    """Return surrounding lines for context.
-
-    Args:
-        lines: Full file split into lines (no trailing newlines).
-        line_idx: 0-based index of the center line.
-        window: Number of lines to include before and after the center.
-
-    Returns:
-        Slice of lines from index ``line_idx - window`` through ``line_idx + window``.
-    """
     start = max(0, line_idx - window)
     end = min(len(lines), line_idx + window + 1)
     return lines[start:end]
@@ -463,27 +325,15 @@ def scan_file(filepath: Path, base_dir: Path) -> list[DeprecationEntry]:
     rel_path = str(filepath.relative_to(base_dir))
     seen_spans: set[tuple[int, int]] = set()
 
-    def _add_entry(m_start: int, mechanism: str, version: str, msg: str, collection: str = "ansible.builtin") -> None:
-        """Deduplicate by character span and add entry.
-
-        Args:
-            m_start: Start index in file text of the regex match.
-            mechanism: Detection mechanism name for the entry.
-            version: Removal version or date string from the match.
-            msg: Raw deprecation message text.
-            collection: Declaring collection name (default ansible.builtin).
-        """
+    def _add(m_start: int, mechanism: str, version: str, msg: str, collection: str = "ansible.builtin") -> None:
         line_no = text[:m_start].count("\n") + 1
         span_key = (line_no, hash(msg[:60]))
         if span_key in seen_spans:
             return
         seen_spans.add(span_key)
-
         msg = re.sub(r"\s+", " ", msg.strip())
         audience = _classify_audience(rel_path, msg)
-        detectable, hint = _classify_detectable(rel_path, msg)
         fp = _fingerprint(rel_path, line_no, msg)
-
         entries.append(
             DeprecationEntry(
                 source_file=rel_path,
@@ -495,35 +345,28 @@ def scan_file(filepath: Path, base_dir: Path) -> list[DeprecationEntry]:
                 context_lines=_get_context(lines, line_no - 1),
                 collection_name=collection,
                 audience=audience,
-                statically_detectable=detectable,
-                detection_hint=hint,
             )
         )
 
-    # 1. display.deprecated() with version= keyword arg
     for m in _DEPRECATED_CALL.finditer(text):
         collection = "ansible.builtin"
         cm = _COLLECTION_NAME.search(m.group(0))
         if cm:
             collection = cm.group("collection")
-        _add_entry(m.start(), "display.deprecated", m.group("version"), m.group("message"), collection)
+        _add(m.start(), "display.deprecated", m.group("version"), m.group("message"), collection)
 
-    # 2. display.deprecated() with positional version
     for m in _DEPRECATED_CALL_POS.finditer(text):
-        _add_entry(m.start(), "display.deprecated", m.group("version"), m.group("message"))
+        _add(m.start(), "display.deprecated", m.group("version"), m.group("message"))
 
-    # 3. display.deprecated() with date= instead of version
     for m in _DEPRECATED_DATE_CALL.finditer(text):
         year, month, day = m.group("year"), m.group("month"), m.group("day")
         version = f"date:{year}-{month.zfill(2)}-{day.zfill(2)}"
-        _add_entry(m.start(), "display.deprecated", version, m.group("message"))
+        _add(m.start(), "display.deprecated", version, m.group("message"))
 
-    # 4. # deprecated: <version> comments
     for i, line in enumerate(lines):
         cm = _DEPRECATED_COMMENT.search(line)
         if cm:
             note = (cm.group("note") or "").strip()
-            # Pull context from the next non-blank, non-comment line
             next_code = ""
             for j in range(i + 1, min(i + 5, len(lines))):
                 stripped = lines[j].strip()
@@ -549,128 +392,528 @@ def scan_file(filepath: Path, base_dir: Path) -> list[DeprecationEntry]:
                     )
                 )
 
-    # 5. _tags.Deprecated(version=...)
     for m in _DEPRECATED_TAG.finditer(text):
-        # Grab the surrounding function/class for context
         line_no = text[: m.start()].count("\n") + 1
         nearby = " ".join(lines[max(0, line_no - 5) : line_no + 2])
         func_m = re.search(r"(?:def|class)\s+(\w+)", nearby)
         ctx_name = func_m.group(1) if func_m else "unknown"
         msg = f"Tag-based deprecation of {ctx_name}: removal in {m.group('version')}"
-        _add_entry(m.start(), "tag", m.group("version"), msg)
+        _add(m.start(), "tag", m.group("version"), msg)
 
     return entries
 
 
-# ── Aggregation helpers ──────────────────────────────────────────────
+# ── Existing rule inventory ──────────────────────────────────────────
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
+_RULE_ID_RE = re.compile(r"rule_id:\s*(\S+)")
+_PY_RULE_ID_RE = re.compile(r'rule_id\s*[=:]\s*["\'](\w+)["\']')
+_PY_DESC_RE = re.compile(r'description\s*[=:]\s*["\'](.+?)["\']')
+_REGO_RULE_ID_RE = re.compile(r'"rule_id":\s*"(\w+)"')
+_REGO_COMMENT_RE = re.compile(r"^#\s*\w+:\s*(.+)", re.MULTILINE)
+_FM_DESC_RE = re.compile(r"description:\s*(.+)")
 
 
-def _build_aggregations(
-    entries: list[dict[str, Any]],
-) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
-    """Build version/mechanism/audience aggregation dicts.
+@dataclass
+class RuleInfo:
+    """Metadata about an existing APME rule.
 
-    Args:
-        entries: Deprecation dicts with removal_version, mechanism, audience.
+    Attributes:
+        rule_id: Rule identifier (e.g. L076, M009).
+        path: File path relative to repo root.
+        description: Rule description text.
+        keywords: Distinctive keywords extracted from the rule.
+    """
+
+    rule_id: str
+    path: str
+    description: str = ""
+    keywords: list[str] = field(default_factory=list)
+
+
+def inventory_existing_rules() -> dict[str, RuleInfo]:
+    """Scan OPA, native, and ansible rule dirs for existing rules.
 
     Returns:
-        Tuple of sorted count maps: by_version, by_mechanism, by_audience.
+        Map of rule_id -> RuleInfo.
     """
-    by_version: dict[str, int] = {}
-    by_mechanism: dict[str, int] = {}
-    by_audience: dict[str, int] = {}
-    for e in entries:
-        v = e["removal_version"]
-        by_version[v] = by_version.get(v, 0) + 1
-        m = e["mechanism"]
-        by_mechanism[m] = by_mechanism.get(m, 0) + 1
-        a = e["audience"]
-        by_audience[a] = by_audience.get(a, 0) + 1
-    return (
-        dict(sorted(by_version.items())),
-        dict(sorted(by_mechanism.items())),
-        dict(sorted(by_audience.items())),
-    )
+    rules: dict[str, RuleInfo] = {}
+
+    def _add(rid: str, path: str, desc: str = "", source: str = "") -> None:
+        kw = _extract_keywords(desc, source)
+        if rid in rules:
+            if desc and not rules[rid].description:
+                rules[rid].description = desc
+            if kw:
+                rules[rid].keywords = list(set(rules[rid].keywords + kw))
+        else:
+            rules[rid] = RuleInfo(rule_id=rid, path=path, description=desc, keywords=kw)
+
+    # OPA .rego files
+    if OPA_BUNDLE.exists():
+        for rego in OPA_BUNDLE.glob("*.rego"):
+            if rego.name.endswith("_test.rego"):
+                continue
+            text = rego.read_text(encoding="utf-8", errors="replace")
+            rel = str(rego.relative_to(REPO_ROOT))
+            desc = ""
+            cm = _REGO_COMMENT_RE.search(text)
+            if cm:
+                desc = cm.group(1).strip()
+            for m in _REGO_RULE_ID_RE.finditer(text):
+                _add(m.group(1), rel, desc, text)
+
+        for md in OPA_BUNDLE.glob("*.md"):
+            text = md.read_text(encoding="utf-8", errors="replace")
+            fm = _FRONTMATTER_RE.match(text)
+            if fm:
+                rm = _RULE_ID_RE.search(fm.group(1))
+                dm = _FM_DESC_RE.search(fm.group(1))
+                if rm:
+                    _add(rm.group(1), str(md.relative_to(REPO_ROOT)), dm.group(1) if dm else "", text)
+
+    # Native .py files
+    if NATIVE_RULES.exists():
+        for py in NATIVE_RULES.glob("*.py"):
+            text = py.read_text(encoding="utf-8", errors="replace")
+            rel = str(py.relative_to(REPO_ROOT))
+            desc = ""
+            dm = _PY_DESC_RE.search(text)
+            if dm:
+                desc = dm.group(1).strip()
+            for m in _PY_RULE_ID_RE.finditer(text):
+                _add(m.group(1), rel, desc, text)
+
+        for md in NATIVE_RULES.glob("*.md"):
+            text = md.read_text(encoding="utf-8", errors="replace")
+            fm = _FRONTMATTER_RE.match(text)
+            if fm:
+                rm = _RULE_ID_RE.search(fm.group(1))
+                dm = _FM_DESC_RE.search(fm.group(1))
+                if rm:
+                    _add(rm.group(1), str(md.relative_to(REPO_ROOT)), dm.group(1) if dm else "")
+
+    # Ansible validator rules
+    if ANSIBLE_RULES.exists():
+        for py in ANSIBLE_RULES.glob("*.py"):
+            text = py.read_text(encoding="utf-8", errors="replace")
+            rel = str(py.relative_to(REPO_ROOT))
+            for m in _PY_RULE_ID_RE.finditer(text):
+                _add(m.group(1), rel, "", text)
+            for m in re.finditer(r'"rule_id":\s*"(\w+)"', text):
+                _add(m.group(1), rel, "", text)
+
+        for md in ANSIBLE_RULES.glob("*.md"):
+            text = md.read_text(encoding="utf-8", errors="replace")
+            fm = _FRONTMATTER_RE.match(text)
+            if fm:
+                rm = _RULE_ID_RE.search(fm.group(1))
+                dm = _FM_DESC_RE.search(fm.group(1))
+                if rm:
+                    _add(rm.group(1), str(md.relative_to(REPO_ROOT)), dm.group(1) if dm else "")
+
+    return rules
 
 
-def _diff_with_previous(new_entries: list[dict[str, Any]], prev_path: Path) -> list[dict[str, Any]]:
-    """Return entries whose fingerprints are new since the last scrape.
+def _extract_keywords(description: str, source: str = "") -> list[str]:
+    """Pull distinctive keywords from a rule's description and source.
 
     Args:
-        new_entries: Current scrape entries as dicts with fingerprint keys.
-        prev_path: Path to prior JSON output to diff against.
+        description: Rule description text.
+        source: Full source code of the rule file.
 
     Returns:
-        Subset of new_entries whose fingerprints were absent in prev_path.
+        List of matching signature keywords found in the text.
     """
-    if not prev_path.exists():
-        return new_entries
-    try:
-        with prev_path.open(encoding="utf-8") as f:
-            prev = json.load(f)
-        prev_fps = {d["fingerprint"] for d in prev.get("deprecations", []) if d.get("fingerprint")}
-    except (json.JSONDecodeError, KeyError):
-        return new_entries
-    return [e for e in new_entries if e.get("fingerprint") not in prev_fps]
+    text = (description + " " + source).lower()
+    keywords = []
+    signatures = [
+        "paramiko",
+        "omap",
+        "pairs",
+        "vault-encrypted",
+        "play_hosts",
+        "follow_redirects",
+        "first_found",
+        "include_vars",
+        "ignore_files",
+        "empty when",
+        "empty args",
+        "action as",
+        "action:",
+        "strategy",
+        "callback",
+        "tree",
+        "oneline",
+        "k=v",
+        "free_form",
+        "_raw_params",
+        "with_items",
+        "with_dict",
+        "deprecated module",
+        "fqcn",
+        "ansible_facts",
+        "ansible_hostname",
+        "variable name",
+        "set_fact",
+        "conditional",
+        "jinja",
+        "become",
+        "no_log",
+    ]
+    for sig in signatures:
+        if sig in text:
+            keywords.append(sig)
+    return keywords
 
 
-# ── Main scrape ──────────────────────────────────────────────────────
+# ── Gap analysis ─────────────────────────────────────────────────────
 
 
-def scrape(repo_dir: Path) -> ScrapeResult:
-    """Scrape all Python files under lib/ansible/ for deprecation notices.
+def _match_deprecation_to_rules(dep: DeprecationEntry, rules: dict[str, RuleInfo]) -> list[str]:
+    """Return rule_ids of existing rules that likely cover this deprecation.
 
     Args:
-        repo_dir: Root of the ansible/ansible checkout (must contain lib/ansible).
+        dep: A scraped deprecation entry to match.
+        rules: Existing APME rule inventory keyed by rule_id.
 
     Returns:
-        ScrapeResult with commit, version, aggregations, and all deprecations.
+        List of rule_id strings that appear to cover this deprecation.
     """
-    ansible_lib = repo_dir / ANSIBLE_LIB
-    if not ansible_lib.exists():
-        print(f"ERROR: {ansible_lib} not found", file=sys.stderr)
-        sys.exit(1)
+    matches = []
+    dep_msg = dep.message.lower()
+    dep_file = dep.source_file.lower()
 
-    commit = get_commit(repo_dir)
-    version = get_ansible_version(repo_dir)
-    all_entries: list[DeprecationEntry] = []
+    for rid, info in rules.items():
+        # Match on overlapping keywords
+        for kw in info.keywords:
+            if kw in dep_msg or kw in dep_file:
+                matches.append(rid)
+                break
+                # Match on description similarity
+        if not any(r == rid for r in matches):
+            desc = info.description.lower()
+            if desc and len(desc) > 10:
+                dep_words = set(dep_msg.split())
+                desc_words = set(desc.split())
+                common = dep_words & desc_words
+                stop = {"the", "a", "an", "is", "in", "of", "to", "for", "and", "or", "not", "with", "be", "on", "at"}
+                common -= stop
+                if len(common) >= 3:
+                    matches.append(rid)
 
-    py_files = sorted(ansible_lib.rglob("*.py"))
-    print(f"Scanning {len(py_files)} Python files in {ansible_lib}…", file=sys.stderr)
+    return matches
 
-    for py_file in py_files:
-        all_entries.extend(scan_file(py_file, ansible_lib))
 
-    entry_dicts = [asdict(e) for e in all_entries]
-    by_version, by_mechanism, by_audience = _build_aggregations(entry_dicts)
+def build_gap_report(
+    deprecations: list[DeprecationEntry],
+    rules: dict[str, RuleInfo],
+    commit: str,
+    ansible_version: str,
+) -> dict[str, Any]:
+    """Compare scraped deprecations against existing rules and build a gap report.
 
-    print(f"Found {len(all_entries)} deprecation notices", file=sys.stderr)
-    for v in sorted(by_version.keys()):
-        print(f"  {v}: {by_version[v]}", file=sys.stderr)
+    Args:
+        deprecations: All scraped deprecation entries.
+        rules: Existing APME rule inventory.
+        commit: ansible/ansible commit hash that was scraped.
+        ansible_version: ansible-core version string.
 
-    return ScrapeResult(
-        scraped_at=datetime.now(tz=timezone.utc).isoformat(),
-        commit=commit,
-        branch="devel",
-        ansible_core_version=version,
-        total_deprecations=len(all_entries),
-        by_version=by_version,
-        by_mechanism=by_mechanism,
-        by_audience=by_audience,
-        deprecations=entry_dicts,
-    )
+    Returns:
+        Gap report dict with metadata and list of uncovered deprecations.
+    """
+    covered: list[dict[str, Any]] = []
+    gaps: list[dict[str, Any]] = []
+
+    for dep in deprecations:
+        matching_rules = _match_deprecation_to_rules(dep, rules)
+        entry = {
+            "source_file": dep.source_file,
+            "line_number": dep.line_number,
+            "mechanism": dep.mechanism,
+            "removal_version": dep.removal_version,
+            "message": dep.message,
+            "fingerprint": dep.fingerprint,
+            "audience": dep.audience,
+            "collection_name": dep.collection_name,
+        }
+        if matching_rules:
+            entry["matched_rules"] = matching_rules
+            covered.append(entry)
+        else:
+            entry["context_lines"] = dep.context_lines
+            entry["rule_spec"] = _generate_rule_spec(dep)
+            gaps.append(entry)
+
+    # Deduplicate gaps by message similarity (many deprecations have the
+    # same message scattered across multiple files)
+    deduped_gaps = _deduplicate_gaps(gaps)
+
+    return {
+        "scraped_at": datetime.now(tz=timezone.utc).isoformat(),
+        "commit": commit,
+        "ansible_core_version": ansible_version,
+        "total_deprecations": len(deprecations),
+        "covered_count": len(covered),
+        "gap_count": len(deduped_gaps),
+        "existing_rule_count": len(rules),
+        "gaps": deduped_gaps,
+    }
+
+
+def _deduplicate_gaps(gaps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge gaps with identical or near-identical messages.
+
+    Args:
+        gaps: List of gap dicts to deduplicate by message similarity.
+
+    Returns:
+        Deduplicated list with additional ``other_locations`` for duplicates.
+    """
+    seen: dict[str, dict[str, Any]] = {}
+    for gap in gaps:
+        # Normalize: lowercase, strip whitespace, collapse spaces
+        key = re.sub(r"\s+", " ", gap["message"].lower().strip())[:120]
+        if key in seen:
+            locs = seen[key].setdefault("other_locations", [])
+            locs.append(f"{gap['source_file']}:{gap['line_number']}")
+        else:
+            seen[key] = gap
+    return list(seen.values())
+
+
+def _generate_rule_spec(dep: DeprecationEntry) -> dict[str, Any]:
+    """Generate a detailed spec for a rule that would catch this deprecation.
+
+    This spec is designed to be self-contained: a maintainer can use it
+    directly to implement a new rule without needing to re-research the
+    deprecation.
+
+    Args:
+        dep: The uncovered deprecation entry.
+
+    Returns:
+        Dict with title, severity, detection hints, and source context.
+    """
+    msg = dep.message
+    ver = dep.removal_version
+
+    # Determine severity based on removal timeline
+    if ver.startswith("date:"):
+        severity = "medium"
+    else:
+        try:
+            parts = tuple(int(x) for x in ver.split("."))
+            severity = "high" if parts <= (2, 22) else "medium"
+        except (ValueError, TypeError):
+            severity = "medium"
+
+    # Generate a descriptive title
+    title = _summarize_deprecation(msg)
+
+    # Determine scope and what to look for
+    detection_hints = _build_detection_hints(dep)
+
+    return {
+        "suggested_rule_id_prefix": "M",
+        "title": title,
+        "severity": severity,
+        "removal_version": ver,
+        "audience": dep.audience,
+        "collection": dep.collection_name,
+        "deprecation_message": msg,
+        "source_location": f"{dep.source_file}:{dep.line_number}",
+        "detection_mechanism": dep.mechanism,
+        "detection_hints": detection_hints,
+        "context": dep.context_lines,
+    }
+
+
+def _summarize_deprecation(message: str) -> str:
+    """Create a concise title from a deprecation message.
+
+    Args:
+        message: Full deprecation message text.
+
+    Returns:
+        Shortened title suitable for issue headings (max ~100 chars).
+    """
+    msg = re.sub(r"\s+", " ", message.strip())
+    # Truncate at common sentence boundaries
+    for sep in [". ", "; ", " — ", " - "]:
+        if sep in msg:
+            msg = msg[: msg.index(sep)]
+            break
+    if len(msg) > 100:
+        msg = msg[:97] + "..."
+    return msg
+
+
+def _build_detection_hints(dep: DeprecationEntry) -> dict[str, Any]:
+    """Provide actionable detection guidance for rule implementers.
+
+    Args:
+        dep: The deprecation entry to analyze.
+
+    Returns:
+        Dict with scope, yaml_keys_to_check, yaml_patterns, and validator_recommendation.
+    """
+    msg_lower = dep.message.lower()
+    file_lower = dep.source_file.lower()
+    hints: dict[str, Any] = {}
+
+    # Determine the YAML scope to check
+    if "play" in file_lower or "playcall" in msg_lower:
+        hints["scope"] = "play"
+    elif "task" in file_lower or "executor" in file_lower:
+        hints["scope"] = "task"
+    elif "inventory" in file_lower:
+        hints["scope"] = "inventory"
+    else:
+        hints["scope"] = "task"
+
+    # Identify what YAML keys/values to look for
+    yaml_keys: list[str] = []
+    yaml_patterns: list[str] = []
+
+    key_signals = {
+        "when": ["when"],
+        "action": ["action"],
+        "args": ["args"],
+        "connection": ["connection"],
+        "strategy": ["strategy"],
+        "follow_redirects": ["follow_redirects"],
+        "ignore_files": ["ignore_files"],
+        "include_vars": ["include_vars"],
+        "callback": ["stdout_callback", "callbacks_enabled"],
+        "!!omap": ["!!omap"],
+        "!!pairs": ["!!pairs"],
+        "!vault-encrypted": ["!vault-encrypted"],
+        "play_hosts": ["play_hosts"],
+        "ansible_hostname": ["ansible_*"],
+        "paramiko": ["connection: paramiko_ssh"],
+        "first_found": ["first_found"],
+        "variable name": ["set_fact", "vars"],
+    }
+    for signal, keys in key_signals.items():
+        if signal in msg_lower:
+            yaml_keys.extend(keys)
+
+    if "yes" in msg_lower and "no" in msg_lower:
+        yaml_patterns.append("string boolean values (yes/no instead of true/false)")
+    if "empty" in msg_lower:
+        yaml_patterns.append("empty or null value for the key")
+    if "k=v" in msg_lower or "key=value" in msg_lower:
+        yaml_patterns.append("inline key=value arguments")
+
+    hints["yaml_keys_to_check"] = yaml_keys or ["see deprecation message"]
+    hints["yaml_patterns"] = yaml_patterns or ["see deprecation message"]
+    hints["validator_recommendation"] = "opa" if yaml_keys else "native"
+
+    return hints
+
+
+# ── Markdown output ──────────────────────────────────────────────────
+
+
+def format_issue_body(report: dict[str, Any]) -> str:
+    """Format the gap report as a GitHub issue body in markdown.
+
+    Args:
+        report: Gap report dict from ``build_gap_report``.
+
+    Returns:
+        Markdown string suitable for a GitHub issue body, or empty if no gaps.
+    """
+    gaps = report["gaps"]
+    if not gaps:
+        return ""
+
+    lines = [
+        "## New Ansible-Core Deprecations Without APME Rules",
+        "",
+        f"**Scraped at**: {report['scraped_at']}",
+        f"**Commit**: `{report['commit'][:12]}`",
+        f"**ansible-core version**: {report['ansible_core_version']}",
+        f"**Total deprecations found**: {report['total_deprecations']}",
+        f"**Covered by existing rules**: {report['covered_count']}",
+        f"**New gaps found**: {report['gap_count']}",
+        "",
+        "---",
+        "",
+    ]
+
+    for i, gap in enumerate(gaps, 1):
+        spec = gap.get("rule_spec", {})
+        lines.append(f"### {i}. {spec.get('title', gap['message'][:80])}")
+        lines.append("")
+        lines.append(f"- **Removal version**: {gap['removal_version']}")
+        lines.append(f"- **Severity**: {spec.get('severity', 'unknown')}")
+        lines.append(f"- **Audience**: {gap['audience']}")
+        lines.append(f"- **Source**: `{gap['source_file']}:{gap['line_number']}`")
+        lines.append(f"- **Mechanism**: {gap['mechanism']}")
+        lines.append("")
+
+        lines.append("**Deprecation message**:")
+        lines.append(f"> {gap['message']}")
+        lines.append("")
+
+        hints = spec.get("detection_hints", {})
+        if hints:
+            lines.append("**Detection guidance**:")
+            lines.append(f"- Scope: `{hints.get('scope', 'task')}`")
+            keys = hints.get("yaml_keys_to_check", [])
+            if keys:
+                lines.append(f"- YAML keys to check: {', '.join(f'`{k}`' for k in keys)}")
+            patterns = hints.get("yaml_patterns", [])
+            if patterns:
+                for p in patterns:
+                    lines.append(f"- Pattern: {p}")
+            lines.append(f"- Recommended validator: `{hints.get('validator_recommendation', 'tbd')}`")
+            lines.append("")
+
+        ctx = gap.get("context_lines", [])
+        if ctx:
+            lines.append("<details><summary>Source context</summary>")
+            lines.append("")
+            lines.append("```python")
+            for cl in ctx:
+                lines.append(cl)
+            lines.append("```")
+            lines.append("</details>")
+            lines.append("")
+
+        other = gap.get("other_locations", [])
+        if other:
+            lines.append(f"<details><summary>Also found in {len(other)} other location(s)</summary>")
+            lines.append("")
+            for loc in other[:10]:
+                lines.append(f"- `{loc}`")
+            if len(other) > 10:
+                lines.append(f"- ... and {len(other) - 10} more")
+            lines.append("</details>")
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
+    lines.append("### Checklist")
+    lines.append("")
+    for i, gap in enumerate(gaps, 1):
+        spec = gap.get("rule_spec", {})
+        title = spec.get("title", gap["message"][:60])
+        lines.append(f"- [ ] {i}. Create rule for: {title}")
+    lines.append("")
+    lines.append("---")
+    lines.append("*Auto-generated by the deprecation-scrape workflow.*")
+
+    return "\n".join(lines)
+
+
+# ── Main ─────────────────────────────────────────────────────────────
 
 
 def _version_gte(version: str, min_version: str) -> bool:
-    """Compare version strings (e.g. '2.23' >= '2.21').
-
-    Args:
-        version: Dotted integer version string to test.
-        min_version: Dotted integer minimum version for comparison.
-
-    Returns:
-        True if version parses as >= min_version; True on parse errors (permissive).
-    """
     try:
         v = tuple(int(x) for x in version.split("."))
         mv = tuple(int(x) for x in min_version.split("."))
@@ -680,45 +923,54 @@ def _version_gte(version: str, min_version: str) -> bool:
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI entry point: scrape, compare, and report gaps."""
     parser = argparse.ArgumentParser(
-        description="Scrape ansible-core deprecation notices from the devel branch.",
+        description="Scrape ansible-core deprecations and identify gaps in APME rule coverage.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Examples:
               python scripts/scrape_ansible_deprecations.py
-              python scripts/scrape_ansible_deprecations.py --skip-clone --cache-dir /tmp/ansible
               python scripts/scrape_ansible_deprecations.py --min-version 2.21 --audience content
-              python scripts/scrape_ansible_deprecations.py --diff-only
+              python scripts/scrape_ansible_deprecations.py --output-json gaps.json
         """),
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"Output JSON file (default: {DEFAULT_OUTPUT.relative_to(REPO_ROOT)})",
     )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE, help="Directory to clone ansible-core into")
     parser.add_argument("--branch", default="devel", help="Branch to scrape (default: devel)")
-    parser.add_argument(
-        "--skip-clone", action="store_true", help="Skip git clone/fetch; use existing cache directory as-is"
-    )
+    parser.add_argument("--skip-clone", action="store_true", help="Skip git clone/fetch; use existing cache")
     parser.add_argument("--min-version", help="Only include deprecations >= this version (e.g. 2.21)")
     parser.add_argument(
-        "--audience", choices=["content", "developer", "all"], default="all", help="Filter by audience (default: all)"
+        "--audience",
+        choices=["content", "developer", "all"],
+        default="all",
+        help="Filter by audience (default: all)",
     )
-    parser.add_argument("--diff-only", action="store_true", help="Only output deprecations new since the last scrape")
-    parser.add_argument("--pretty", action="store_true", default=True, help="Pretty-print JSON output (default: True)")
+    parser.add_argument("--output-json", type=Path, default=None, help="Write gap report JSON to this file")
+    parser.add_argument("--output-md", type=Path, default=None, help="Write gap report markdown to this file")
 
     args = parser.parse_args()
 
+    # Step 1: Clone/update ansible-core
     if not args.skip_clone:
         clone_or_update(args.cache_dir, args.branch)
 
-    result = scrape(args.cache_dir)
+    # Step 2: Scrape deprecations
+    ansible_lib = args.cache_dir / ANSIBLE_LIB
+    if not ansible_lib.exists():
+        print(f"ERROR: {ansible_lib} not found", file=sys.stderr)
+        sys.exit(1)
 
-    filtered = result.deprecations
+    commit = get_commit(args.cache_dir)
+    version = get_ansible_version(args.cache_dir)
+    all_entries: list[DeprecationEntry] = []
+
+    py_files = sorted(ansible_lib.rglob("*.py"))
+    print(f"Scanning {len(py_files)} Python files in {ansible_lib}…", file=sys.stderr)
+    for py_file in py_files:
+        all_entries.extend(scan_file(py_file, ansible_lib))
+    print(f"Found {len(all_entries)} deprecation notices", file=sys.stderr)
+
+    # Step 3: Filter
+    filtered = [asdict(e) for e in all_entries]
     if args.min_version:
         filtered = [
             d
@@ -728,23 +980,35 @@ def main() -> None:
     if args.audience != "all":
         filtered = [d for d in filtered if d["audience"] == args.audience]
 
-    if args.diff_only:
-        new_only = _diff_with_previous(filtered, args.output)
-        print(f"  {len(new_only)} new deprecations (of {len(filtered)} total)", file=sys.stderr)
-        filtered = new_only
+    # Reconstruct entries for gap analysis
+    entries = [DeprecationEntry(**{k: v for k, v in d.items()}) for d in filtered]
+    print(f"After filtering: {len(entries)} deprecations", file=sys.stderr)
 
-    result.deprecations = filtered
-    result.total_deprecations = len(filtered)
-    bv, bm, ba = _build_aggregations(filtered)
-    result.by_version, result.by_mechanism, result.by_audience = bv, bm, ba
+    # Step 4: Inventory existing rules
+    rules = inventory_existing_rules()
+    print(f"Found {len(rules)} existing rules in APME", file=sys.stderr)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    indent = 2 if args.pretty else None
-    args.output.write_text(
-        json.dumps(asdict(result), indent=indent, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    print(f"\nWrote {len(filtered)} deprecations to {args.output}", file=sys.stderr)
+    # Step 5: Build gap report
+    report = build_gap_report(entries, rules, commit, version)
+    print(f"Covered: {report['covered_count']}, Gaps: {report['gap_count']}", file=sys.stderr)
+
+    # Step 6: Output
+    if args.output_json:
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Wrote JSON report to {args.output_json}", file=sys.stderr)
+
+    issue_body = format_issue_body(report)
+    if args.output_md:
+        args.output_md.parent.mkdir(parents=True, exist_ok=True)
+        args.output_md.write_text(issue_body, encoding="utf-8")
+        print(f"Wrote markdown report to {args.output_md}", file=sys.stderr)
+
+    # Always write JSON to stdout for pipeline consumption
+    print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
