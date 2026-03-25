@@ -915,8 +915,11 @@ def format_issue_body(report: dict[str, Any]) -> str:
 
 def _version_gte(version: str, min_version: str) -> bool:
     try:
-        v = tuple(int(x) for x in version.split("."))
-        mv = tuple(int(x) for x in min_version.split("."))
+        v_parts = [int(x) for x in version.split(".")]
+        mv_parts = [int(x) for x in min_version.split(".")]
+        max_len = max(len(v_parts), len(mv_parts))
+        v = tuple(v_parts + [0] * (max_len - len(v_parts)))
+        mv = tuple(mv_parts + [0] * (max_len - len(mv_parts)))
         return v >= mv
     except (ValueError, TypeError):
         return True
@@ -975,7 +978,7 @@ def main() -> None:
         filtered = [
             d
             for d in filtered
-            if not d["removal_version"].startswith("date:") and _version_gte(d["removal_version"], args.min_version)
+            if d["removal_version"].startswith("date:") or _version_gte(d["removal_version"], args.min_version)
         ]
     if args.audience != "all":
         filtered = [d for d in filtered if d["audience"] == args.audience]
