@@ -21,21 +21,24 @@ class SessionSummary(BaseModel):  # type: ignore[misc]
     last_seen: str
 
 
-class ScanSummary(BaseModel):  # type: ignore[misc]
-    """Scan list item.
+class ActivitySummary(BaseModel):  # type: ignore[misc]
+    """Activity list item (a persisted check or remediate run).
 
     Attributes:
-        scan_id: UUID of the scan run.
+        scan_id: UUID of the run (``scans.scan_id`` column).
         session_id: Owning session hash.
         project_path: Project root path.
-        source: Origin of the scan (cli, ci, gateway).
+        source: Origin of the run (cli, ci, gateway).
         created_at: ISO 8601 timestamp.
-        scan_type: Either "scan" or "fix".
-        total_violations: Total violation count.
-        auto_fixable: Count of tier-1 fixable violations.
+        scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).
+        total_violations: Total violation count (initial, before Tier 1 fixes).
+        fixable: Tier-1 auto-fixable violation count (applied or dry-run).
         ai_candidate: Count of tier-2 AI-candidate violations.
+        ai_proposed: AI proposals offered to the user.
+        ai_declined: Violations the AI could not fix.
+        ai_accepted: AI proposals the user approved and applied.
         manual_review: Count of tier-3 manual violations.
-        fixed_count: Number of violations fixed (fix scans only).
+        remediated_count: Total applied (Tier 1 + AI accepted).
     """
 
     scan_id: str
@@ -45,10 +48,13 @@ class ScanSummary(BaseModel):  # type: ignore[misc]
     created_at: str
     scan_type: str
     total_violations: int
-    auto_fixable: int
+    fixable: int
     ai_candidate: int
+    ai_proposed: int = 0
+    ai_declined: int = 0
+    ai_accepted: int = 0
     manual_review: int
-    fixed_count: int = 0
+    remediated_count: int = 0
 
 
 class ViolationDetail(BaseModel):  # type: ignore[misc]
@@ -117,25 +123,43 @@ class LogEntry(BaseModel):  # type: ignore[misc]
     level: int
 
 
-class ScanDetail(BaseModel):  # type: ignore[misc]
-    """Full scan with violations, proposals, and logs.
+class PatchDetail(BaseModel):  # type: ignore[misc]
+    """Per-file diff from a check or remediate run.
 
     Attributes:
-        scan_id: UUID of the scan run.
+        id: Auto-increment ID.
+        file: Relative file path.
+        diff: Unified diff text.
+    """
+
+    id: int
+    file: str
+    diff: str
+
+
+class ActivityDetail(BaseModel):  # type: ignore[misc]
+    """Full activity record with violations, proposals, logs, and patches.
+
+    Attributes:
+        scan_id: UUID of the run (``scans.scan_id`` column).
         session_id: Owning session hash.
         project_path: Project root path.
-        source: Origin of the scan.
+        source: Origin of the run.
         created_at: ISO 8601 timestamp.
-        scan_type: Either "scan" or "fix".
-        total_violations: Total violation count.
-        auto_fixable: Count of tier-1 fixable violations.
+        scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).
+        total_violations: Total violation count (initial, before Tier 1 fixes).
+        fixable: Tier-1 auto-fixable violation count (applied or dry-run).
         ai_candidate: Count of tier-2 AI-candidate violations.
+        ai_proposed: AI proposals offered to the user.
+        ai_declined: Violations the AI could not fix.
+        ai_accepted: AI proposals the user approved and applied.
         manual_review: Count of tier-3 manual violations.
-        fixed_count: Number of violations fixed (fix scans only).
+        remediated_count: Total applied (Tier 1 + AI accepted).
         diagnostics_json: Raw diagnostics JSON string.
         violations: List of violation rows.
         proposals: List of proposal rows.
         logs: List of log entries.
+        patches: Per-file diffs.
     """
 
     scan_id: str
@@ -145,32 +169,36 @@ class ScanDetail(BaseModel):  # type: ignore[misc]
     created_at: str
     scan_type: str
     total_violations: int
-    auto_fixable: int
+    fixable: int
     ai_candidate: int
+    ai_proposed: int = 0
+    ai_declined: int = 0
+    ai_accepted: int = 0
     manual_review: int
-    fixed_count: int = 0
+    remediated_count: int = 0
     diagnostics_json: str | None
     violations: list[ViolationDetail]
     proposals: list[ProposalDetail]
     logs: list[LogEntry]
+    patches: list[PatchDetail] = Field(default_factory=list)
 
 
 class SessionDetail(BaseModel):  # type: ignore[misc]
-    """Session with its scans.
+    """Session with its activity history.
 
     Attributes:
         session_id: Deterministic project hash.
         project_path: Filesystem path.
         first_seen: First event timestamp.
         last_seen: Most recent event timestamp.
-        scans: List of scans in this session.
+        scans: List of activity rows for this session (``scans`` table).
     """
 
     session_id: str
     project_path: str
     first_seen: str
     last_seen: str
-    scans: list[ScanSummary]
+    scans: list[ActivitySummary]
 
 
 class TopViolation(BaseModel):  # type: ignore[misc]
@@ -189,26 +217,26 @@ class TrendPoint(BaseModel):  # type: ignore[misc]
     """Violation trend data point for a session.
 
     Attributes:
-        scan_id: UUID of the scan run.
+        scan_id: UUID of the run (``scans.scan_id`` column).
         created_at: ISO 8601 timestamp.
         total_violations: Total violation count.
-        auto_fixable: Count of auto-fixable violations.
-        scan_type: Either "scan" or "fix".
+        fixable: Tier-1 auto-fixable violation count.
+        scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).
     """
 
     scan_id: str
     created_at: str
     total_violations: int
-    auto_fixable: int
+    fixable: int
     scan_type: str
 
 
-class FixRateEntry(BaseModel):  # type: ignore[misc]
-    """Fix frequency for a specific rule.
+class RemediationRateEntry(BaseModel):  # type: ignore[misc]
+    """Remediation frequency for a specific rule.
 
     Attributes:
         rule_id: Rule identifier.
-        fix_count: Number of times this rule appeared in fix scans.
+        fix_count: Number of times this rule appeared in remediate runs.
     """
 
     rule_id: str
@@ -246,7 +274,7 @@ class PaginatedResponse(BaseModel):  # type: ignore[misc]
     total: int
     limit: int
     offset: int
-    items: list[SessionSummary] | list[ScanSummary] | list[TopViolation] | list[ProjectSummary]
+    items: list[SessionSummary] | list[ActivitySummary] | list[TopViolation] | list[ProjectSummary]
 
 
 class AiModelInfo(BaseModel):  # type: ignore[misc]
@@ -304,10 +332,10 @@ class ProjectSummary(BaseModel):  # type: ignore[misc]
         branch: Target branch.
         created_at: ISO-8601 creation timestamp.
         health_score: Computed 0-100 score.
-        total_violations: Count from latest scan.
+        total_violations: Count from latest check (scan row).
         violation_trend: Direction indicator.
-        scan_count: Number of completed scans.
-        last_scanned_at: ISO timestamp of most recent scan.
+        scan_count: Number of completed runs (``scan_count`` / scans table).
+        last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).
     """
 
     id: str
@@ -323,14 +351,14 @@ class ProjectSummary(BaseModel):  # type: ignore[misc]
 
 
 class ProjectDetail(ProjectSummary):
-    """Full project representation with latest scan detail.
+    """Full project representation with latest activity summary.
 
     Attributes:
-        latest_scan: Summary of the most recent scan, if any.
+        latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).
         severity_breakdown: Violation counts keyed by severity level.
     """
 
-    latest_scan: ScanSummary | None = None
+    latest_scan: ActivitySummary | None = None
     severity_breakdown: dict[str, int] = Field(default_factory=dict)
 
 
@@ -362,8 +390,8 @@ class UpdateProjectRequest(BaseModel):  # type: ignore[misc]
     branch: str | None = None
 
 
-class ScanRequestOptions(BaseModel):  # type: ignore[misc]
-    """Per-operation scan/fix options (ADR-037).
+class OperationRequestOptions(BaseModel):  # type: ignore[misc]
+    """Per-operation check/remediate options (ADR-037).
 
     Attributes:
         ansible_version: Target ansible-core version.
@@ -383,10 +411,10 @@ class DashboardSummary(BaseModel):  # type: ignore[misc]
 
     Attributes:
         total_projects: Number of defined projects.
-        total_scans: Number of completed scans across all projects.
-        total_violations: Cumulative violations across all scans.
-        current_violations: Violations from each project's latest scan.
-        total_fixed: Sum of auto-fixable violations.
+        total_scans: Number of completed runs across all projects (``total_scans`` column).
+        total_violations: Cumulative violations across all runs.
+        current_violations: Violations from each project's latest run.
+        total_fixed: Sum of remediated violations (``total_fixed`` field name unchanged).
         avg_health_score: Mean health score across projects.
     """
 
@@ -405,10 +433,10 @@ class ProjectRanking(BaseModel):  # type: ignore[misc]
         id: Project identifier.
         name: Display label.
         health_score: Computed 0-100 score.
-        total_violations: Latest scan violation count.
-        scan_count: Number of completed scans.
-        last_scanned_at: ISO timestamp of most recent scan.
-        days_since_last_scan: Age in days since last scan.
+        total_violations: Latest run violation count.
+        scan_count: Number of completed runs (``scan_count`` column).
+        last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).
+        days_since_last_scan: Age in days since last run (``days_since_last_scan`` column).
     """
 
     id: str

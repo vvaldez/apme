@@ -52,7 +52,7 @@ The formatter is a **pre-condition** for the remediation engine. `apme-scan form
 
 ## Fix Pipeline
 
-The `apme-scan fix` command orchestrates the full pipeline:
+The `apme-scan remediate` command orchestrates the full pipeline:
 
 ```
 Phase 1: Format
@@ -63,7 +63,7 @@ Phase 2: Idempotency Gate
   └─► format again
   └─► assert zero diffs (if not: formatter bug, abort)
 
-Phase 3: Scan
+Phase 3: Engine scan (validators)
   └─► run engine (parse → annotate → hierarchy)
   └─► fan out to all validators (Native, OPA, Ansible, Gitleaks)
   └─► merge + deduplicate violations
@@ -413,6 +413,8 @@ class FixReport:
 
 ## gRPC Contract
 
+User-facing **check** and **remediate** run through **`FixSession`** (bidirectional stream, ADR-028). **`ScanStream` was removed** (ADR-039) so check and remediate share one engine path. The unary **`Fix` RPC** below remains illustrative for a one-shot shape; the implemented streaming contract is `FixSession`.
+
 ### New Fix RPC on Primary
 
 ```protobuf
@@ -516,10 +518,10 @@ The remediation engine lives inside **Primary**. It reuses Primary's existing sc
 
 ## CLI Integration
 
-### `apme-scan fix`
+### `apme-scan remediate`
 
 ```
-apme-scan fix [target] [options]
+apme-scan remediate [target] [options]
 
 Options:
   --apply              Write fixes in place (without this, show diffs only)
@@ -536,7 +538,7 @@ Options:
 ```
 Phase 1: Formatting... 3 file(s) reformatted
 Phase 2: Idempotency check... Passed
-Phase 3: Scanning... 42 violation(s)
+Phase 3: Engine scan... 42 violation(s)
 Phase 4: Remediating...
   Pass 1: 28 fixable (Tier 1) → applied 26, 2 failed
   Pass 2: 4 fixable (Tier 1) → applied 4
@@ -557,7 +559,7 @@ Phase 6: Summary
 2. **First transforms** — L021 (missing mode), L007 (shell→command), M001 (FQCN) as proof-of-concept
 3. **Convergence loop** — scan → transform → re-scan loop with oscillation detection
 4. **Fix RPC** — gRPC contract on Primary
-5. **CLI fix integration** — wire the existing `_run_fix` stub to the real engine
+5. **CLI remediate integration** — wire the remediation path to the real engine (`FixSession` per ADR-028/ADR-039)
 6. **AI escalation** — OpenLLM gRPC client + prompt builder (Phase 3)
 7. **Web UI remediation queue** — accept/reject AI proposals (Phase 4)
 

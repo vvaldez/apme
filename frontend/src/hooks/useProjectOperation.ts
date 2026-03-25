@@ -1,8 +1,8 @@
 /**
- * WebSocket hook for project scan/fix operations (ADR-037).
+ * WebSocket hook for project check/remediate operations (ADR-037).
  *
  * Connects to WS /api/v1/projects/{id}/ws/operate and manages
- * the clone → scan/fix → result lifecycle with progress streaming.
+ * the clone → check/remediate → result lifecycle with progress streaming.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -11,7 +11,7 @@ export type ProjectOperationStatus =
   | "idle"
   | "connecting"
   | "cloning"
-  | "scanning"
+  | "checking"
   | "awaiting_approval"
   | "applying"
   | "complete"
@@ -21,6 +21,7 @@ export interface ProgressEntry {
   phase: string;
   message: string;
   timestamp: number;
+  progress?: number;
 }
 
 export interface ProjectProposal {
@@ -31,18 +32,24 @@ export interface ProjectProposal {
   confidence: number;
   explanation?: string;
   diff_hunk?: string;
+  status?: 'proposed' | 'declined';
+  suggestion?: string;
+  line_start?: number;
 }
 
 export interface ProjectOperationResult {
   total_violations: number;
-  auto_fixable: number;
+  fixable: number;
   ai_candidate: number;
+  ai_proposed: number;
+  ai_declined: number;
+  ai_accepted: number;
   manual_review: number;
-  fixed_count?: number;
+  remediated_count?: number;
 }
 
 export interface ProjectOperationOptions {
-  fix?: boolean;
+  remediate?: boolean;
   ansible_version?: string;
   collection_specs?: string[];
   enable_ai?: boolean;
@@ -92,7 +99,7 @@ export function useProjectOperation(projectId: string) {
         ws.send(
           JSON.stringify({
             type: "start",
-            fix: options.fix ?? false,
+            remediate: options.remediate ?? false,
             options: {
               ansible_version: options.ansible_version || "",
               collection_specs: options.collection_specs || [],
@@ -118,7 +125,7 @@ export function useProjectOperation(projectId: string) {
 
           case "started":
             setScanId(msg.scan_id as string);
-            setStatus("scanning");
+            setStatus("checking");
             break;
 
           case "progress":
@@ -128,6 +135,7 @@ export function useProjectOperation(projectId: string) {
                 phase: (msg.phase as string) || "",
                 message: (msg.message as string) || "",
                 timestamp: Date.now(),
+                progress: typeof msg.progress === "number" ? msg.progress : undefined,
               },
             ]);
             break;

@@ -28,7 +28,7 @@ export interface ProposalDetail {
   status: string;
 }
 
-export interface ScanSummary {
+export interface ActivitySummary {
   scan_id: string;
   session_id: string;
   project_path: string;
@@ -36,17 +36,27 @@ export interface ScanSummary {
   created_at: string;
   scan_type: string;
   total_violations: number;
-  auto_fixable: number;
+  fixable: number;
   ai_candidate: number;
+  ai_proposed: number;
+  ai_declined: number;
+  ai_accepted: number;
   manual_review: number;
-  fixed_count: number;
+  remediated_count: number;
 }
 
-export interface ScanDetail extends ScanSummary {
+export interface PatchDetail {
+  id: number;
+  file: string;
+  diff: string;
+}
+
+export interface ActivityDetail extends ActivitySummary {
   diagnostics_json: string | null;
   violations: ViolationDetail[];
   proposals: ProposalDetail[];
   logs: LogEntry[];
+  patches: PatchDetail[];
 }
 
 export interface SessionSummary {
@@ -57,7 +67,7 @@ export interface SessionSummary {
 }
 
 export interface SessionDetail extends SessionSummary {
-  scans: ScanSummary[];
+  scans: ActivitySummary[];
 }
 
 export interface TopViolation {
@@ -69,11 +79,12 @@ export interface TrendPoint {
   scan_id: string;
   created_at: string;
   total_violations: number;
-  auto_fixable: number;
+  fixable: number;
+  /** Whether this point is from a check-only run or a remediate run (`check` / `remediate`). */
   scan_type: string;
 }
 
-export interface FixRateEntry {
+export interface RemediationRateEntry {
   rule_id: string;
   fix_count: number;
 }
@@ -127,7 +138,7 @@ export interface ProjectSummary {
 }
 
 export interface ProjectDetail extends ProjectSummary {
-  latest_scan: ScanSummary | null;
+  latest_scan: ActivitySummary | null;
   severity_breakdown: Record<string, number>;
 }
 
@@ -148,7 +159,7 @@ export interface DashboardSummary {
   total_scans: number;
   total_violations: number;
   current_violations: number;
-  total_fixed: number;
+  total_remediated: number;
   avg_health_score: number;
 }
 

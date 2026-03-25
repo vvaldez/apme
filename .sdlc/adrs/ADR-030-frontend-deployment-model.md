@@ -33,8 +33,8 @@ Both options consume the identical gateway API from ADR-029.
 - [design-dashboard.md](/.sdlc/context/design-dashboard.md) specifies
   PatternFly 5/6 components, React + TypeScript, and Vite as the build tool.
 - [docs/mockups/](/docs/mockups/) contains HTML mockups (PatternFly 6, dark
-  mode) with a Figma file for four key views: dashboard home, scan results,
-  scan detail, and ROI metrics.
+  mode) with a Figma file for four key views: dashboard home, check results,
+  activity detail, and ROI metrics.
 - The mockups use `@ansible/ansible-ui-framework` component patterns matching
   AAP's existing UI.
 
@@ -121,7 +121,7 @@ APME **does not use these capabilities** for its file pipeline because:
    that Backstage cannot provide.
 
 3. **gRPC streaming**: The chunked files are streamed to Primary over
-   `FixSession` or `ScanStream` gRPC RPCs. The gateway must hold the gRPC
+   `FixSession` (check and remediate modes; ADR-039). The gateway must hold the gRPC
    stream and correlate it with the WebSocket connection. This is the gateway's
    core responsibility.
 
@@ -244,7 +244,7 @@ path, not a replacement.
 2. Install PatternFly (`@patternfly/react-core`, `@patternfly/react-table`,
    `@patternfly/react-charts`)
 3. Implement views per [design-dashboard.md](/.sdlc/context/design-dashboard.md):
-   scan list, scan detail, rule catalog, dashboard home, remediation queue
+   activity list, activity detail, rule catalog, dashboard home, remediation queue
 4. Build static assets into gateway container image
 5. Gateway serves via `FastAPI.mount("/", StaticFiles(...))`
 
@@ -260,6 +260,10 @@ path, not a replacement.
 
 - ADR-029: Web gateway architecture (the API this frontend consumes)
 - ADR-028: Session-based fix workflow (FixSession protocol the WebSocket maps)
+
+## Addendum
+
+> **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme-scan` binary name is unchanged.
 
 ## References
 

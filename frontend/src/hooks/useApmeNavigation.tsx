@@ -4,8 +4,8 @@ import { DashboardPage } from '../pages/DashboardPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { ProjectDetailPage } from '../pages/ProjectDetailPage';
 import { PlaygroundPage } from '../pages/PlaygroundPage';
-import { ScansPage } from '../pages/ScansPage';
-import { ScanDetailPage } from '../pages/ScanDetailPage';
+import { ActivityPage } from '../pages/ActivityPage';
+import { ActivityDetailPage } from '../pages/ActivityDetailPage';
 import { HealthPage } from '../pages/HealthPage';
 import { SettingsPage } from '../pages/SettingsPage';
 
@@ -32,8 +32,8 @@ export function useApmeNavigation(): PageNavigationItem[] {
         path: '',
         children: [
           { id: 'playground', path: 'playground', label: 'Playground', element: <PlaygroundPage /> },
-          { id: 'scans', path: 'scans', label: 'Scans', element: <ScansPage /> },
-          { id: 'scan-detail', path: 'scans/:scanId', element: <ScanDetailPage />, hidden: true },
+          { id: 'activity', path: 'activity', label: 'Activity', element: <ActivityPage /> },
+          { id: 'activity-detail', path: 'activity/:activityId', element: <ActivityDetailPage />, hidden: true },
         ],
       },
       {

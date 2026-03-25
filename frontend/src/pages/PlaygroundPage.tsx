@@ -14,7 +14,7 @@ import {
   type SessionResult,
   type Tier1Result,
 } from '../hooks/useSessionStream';
-import { ScanOptionsForm } from '../components/ScanOptionsForm';
+import { CheckOptionsForm } from '../components/CheckOptionsForm';
 import { OperationProgressPanel } from '../components/OperationProgressPanel';
 import { ProposalReviewPanel } from '../components/ProposalReviewPanel';
 import { Tier1ResultsPanel } from '../components/Tier1ResultsPanel';
@@ -63,6 +63,9 @@ export function PlaygroundPage() {
     confidence: p.confidence,
     explanation: p.explanation,
     diff_hunk: p.diff_hunk,
+    status: p.status,
+    suggestion: p.suggestion,
+    line_start: p.line_start,
   }));
 
   const handleDrop = useCallback(
@@ -108,13 +111,13 @@ export function PlaygroundPage() {
     setFiles([]);
   }, [reset]);
 
-  const isRunning = opStatus === 'connecting' || opStatus === 'preparing' || opStatus === 'scanning' || opStatus === 'applying';
+  const isRunning = opStatus === 'connecting' || opStatus === 'preparing' || opStatus === 'checking' || opStatus === 'applying';
 
   return (
     <PageLayout>
       <PageHeader
         title="Playground"
-        description="Ad-hoc scan — upload files directly for a quick lint check. Results are not persisted to any project."
+        description="Ad-hoc check — upload files directly for a quick lint check. Results are not persisted to any project."
       />
 
       <div style={{ padding: '0 24px 24px' }}>
@@ -183,7 +186,7 @@ export function PlaygroundPage() {
                 </div>
               )}
 
-              <ScanOptionsForm
+              <CheckOptionsForm
                 ansibleVersion={ansibleVersion}
                 onAnsibleVersionChange={setAnsibleVersion}
                 collections={collections}
@@ -198,7 +201,7 @@ export function PlaygroundPage() {
                 onClick={handleSubmit}
                 style={{ marginTop: 16 }}
               >
-                Start Scan
+                Start Check
               </Button>
             </CardBody>
           </Card>
@@ -226,9 +229,9 @@ export function PlaygroundPage() {
           <Card style={{ textAlign: 'center', padding: 48 }}>
             <CardBody>
               <div style={{ fontSize: 48, color: 'var(--pf-t--global--color--status--success--default)' }}>&#10003;</div>
-              <h2>Scan Complete</h2>
+              <h2>Check Complete</h2>
               <Button variant="primary" onClick={handleReset} style={{ marginTop: 16 }}>
-                Scan More Files
+                Check More Files
               </Button>
             </CardBody>
           </Card>
@@ -237,7 +240,7 @@ export function PlaygroundPage() {
         {rawStatus === 'error' && (
           <Card style={{ textAlign: 'center', padding: 48 }}>
             <CardBody>
-              <h2 style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>Scan Failed</h2>
+              <h2 style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>Check Failed</h2>
               <p style={{ opacity: 0.7 }}>{error}</p>
               <Button variant="primary" onClick={handleReset}>
                 Try Again
@@ -290,7 +293,7 @@ function SessionComplete({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `apme-fixed-${scanId ?? 'files'}.zip`;
+      a.download = `apme-remediated-${scanId ?? 'files'}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -302,10 +305,13 @@ function SessionComplete({
 
   const opResult: OperationResult = {
     total_violations: remaining,
-    auto_fixable: 0,
+    fixable: 0,
     ai_candidate: 0,
+    ai_proposed: 0,
+    ai_declined: 0,
+    ai_accepted: 0,
     manual_review: remaining,
-    fixed_count: totalPatches,
+    remediated_count: totalPatches,
   };
 
   return (
@@ -316,7 +322,7 @@ function SessionComplete({
         <>
           {patchedFiles.size > 0 && (
             <Button variant="primary" onClick={handleDownload} isDisabled={downloading}>
-              {downloading ? 'Preparing...' : `Download Fixed Files (${patchedFiles.size})`}
+              {downloading ? 'Preparing...' : `Download Remediated Files (${patchedFiles.size})`}
             </Button>
           )}
           {remaining > 0 && (

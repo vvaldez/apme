@@ -44,7 +44,7 @@ time_savings = manual_hours / apme_hours
 
 ### Code Quality
 
-**Definition**: Reduction in "High Risk" security findings post-scan
+**Definition**: Reduction in "High Risk" security findings after a check run
 
 **Target**: 95% reduction in high-risk findings
 
@@ -60,9 +60,9 @@ quality_improvement = (pre_scan_high_risk - post_scan_high_risk) / pre_scan_high
 
 ## Secondary Metrics
 
-### Scan Coverage
+### Check coverage
 
-**Definition**: Percentage of Ansible content scanned
+**Definition**: Percentage of Ansible content covered by a check run
 
 **Target**: 100% of repositories in scope
 

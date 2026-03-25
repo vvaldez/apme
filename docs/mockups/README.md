@@ -9,8 +9,8 @@
 | Screen | HTML Mockup | Figma Node |
 |--------|-------------|------------|
 | Dashboard Home | [dashboard-home.html](dashboard-home.html) | [Node 1:2](https://www.figma.com/design/4mmk2Q6F4KZMnuX4E5zseX?node-id=1-2) |
-| Scan Results List | [scan-results.html](scan-results.html) | [Node 3:2](https://www.figma.com/design/4mmk2Q6F4KZMnuX4E5zseX?node-id=3-2) |
-| Scan Detail | [scan-detail.html](scan-detail.html) | [Node 4:2](https://www.figma.com/design/4mmk2Q6F4KZMnuX4E5zseX?node-id=4-2) |
+| Check Results List | [scan-results.html](scan-results.html) | [Node 3:2](https://www.figma.com/design/4mmk2Q6F4KZMnuX4E5zseX?node-id=3-2) |
+| Activity Detail | [scan-detail.html](scan-detail.html) | [Node 4:2](https://www.figma.com/design/4mmk2Q6F4KZMnuX4E5zseX?node-id=4-2) |
 | ROI Metrics | [roi-metrics.html](roi-metrics.html) | [Node 2:2](https://www.figma.com/design/4mmk2Q6F4KZMnuX4E5zseX?node-id=2-2) |
 
 ## Design System
@@ -63,4 +63,4 @@ python3 -m http.server 8765
 
 4. **Sidebar Navigation**: Matches AAP platform layout for user familiarity.
 
-5. **Progressive Disclosure**: Dashboard shows summary → Scans list shows all → Detail shows violations per file.
+5. **Progressive Disclosure**: Dashboard shows summary → Activity list shows all → Detail shows violations per file.

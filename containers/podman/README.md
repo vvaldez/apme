@@ -28,13 +28,13 @@ The pod creates:
 From **any directory** you want to work with:
 
 ```bash
-# Scan (default: scan .)
+# Check (default: check .)
 ./containers/podman/run-cli.sh
-./containers/podman/run-cli.sh scan --json .
+./containers/podman/run-cli.sh check --json .
 
-# Fix (Tier 1 deterministic fixes, --check for dry-run)
-./containers/podman/run-cli.sh fix --check .
-./containers/podman/run-cli.sh fix .
+# Remediate (Tier 1 deterministic fixes, --check for dry-run)
+./containers/podman/run-cli.sh remediate --check .
+./containers/podman/run-cli.sh remediate .
 
 # Format (YAML normalization)
 ./containers/podman/run-cli.sh format --check .
@@ -45,7 +45,7 @@ From **any directory** you want to work with:
 
 The script mounts `$(pwd)` read-write at `/workspace` in the CLI container and joins the pod so the CLI can reach Primary at `127.0.0.1:50051`.
 
-The `fix` command uses a **bidirectional gRPC stream** (`FixSession`, ADR-028)
+The `remediate` command uses a **bidirectional gRPC stream** (`FixSession`, ADR-028)
 that streams progress in real-time and supports interactive review of AI
 proposals when `--ai` is enabled.
 

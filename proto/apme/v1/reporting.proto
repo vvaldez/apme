@@ -34,6 +34,8 @@ message FixCompletedEvent {
   FixReport report = 8;
   repeated ProposalOutcome proposals = 9;
   repeated ProgressUpdate logs = 10;         // pipeline milestone logs (ADR-033)
+  repeated Violation fixed_violations = 11;
+  repeated FilePatch patches = 12;
 }
 
 message ProposalOutcome {

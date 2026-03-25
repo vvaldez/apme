@@ -19,9 +19,39 @@ export interface OperationProgressPanelProps {
 const STATUS_LABELS: Partial<Record<OperationStatus, string>> = {
   connecting: 'Connecting...',
   preparing: 'Preparing...',
-  scanning: 'Scanning...',
+  cloning: 'Cloning repository...',
+  checking: 'Checking...',
   applying: 'Applying approved fixes...',
 };
+
+const PHASE_WEIGHTS: Record<string, { start: number; end: number }> = {
+  cloning:    { start: 0,  end: 5 },
+  format:     { start: 5,  end: 15 },
+  tier1:      { start: 15, end: 90 },
+  ai:         { start: 15, end: 90 },
+};
+
+function entryProgress(entry: OperationProgress): number | null {
+  const weight = PHASE_WEIGHTS[entry.phase];
+  if (!weight) return null;
+
+  if (entry.progress != null && entry.progress > 0 && entry.progress <= 1) {
+    return weight.start + (weight.end - weight.start) * entry.progress;
+  }
+
+  const passMatch = entry.message.match(/Pass (\d+)\/(\d+)/);
+  if (passMatch) {
+    const current = parseInt(passMatch[1]!, 10);
+    const total = parseInt(passMatch[2]!, 10);
+    return weight.start + (weight.end - weight.start) * Math.min(current / total, 1);
+  }
+
+  if (/[Cc]onverged|[Ff]ully converged|Final scan/.test(entry.message)) {
+    return weight.end;
+  }
+
+  return weight.start + 1;
+}
 
 export function OperationProgressPanel({
   status,
@@ -29,12 +59,37 @@ export function OperationProgressPanel({
   onCancel,
 }: OperationProgressPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const highWaterRef = useRef(0);
+
+  if (status === 'connecting' || status === 'preparing') {
+    highWaterRef.current = 0;
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [progress.length]);
 
   const label = STATUS_LABELS[status] ?? 'Processing...';
+
+  let pct: number | undefined;
+  if (status === 'complete') {
+    pct = 100;
+    highWaterRef.current = 0;
+  } else if (status === 'error') {
+    pct = undefined;
+  } else if (status === 'cloning') {
+    pct = 2;
+    highWaterRef.current = 2;
+  } else {
+    for (const entry of progress) {
+      const val = entryProgress(entry);
+      if (val != null && val > highWaterRef.current) {
+        highWaterRef.current = val;
+      }
+    }
+    pct = Math.max(highWaterRef.current, 1);
+    if (pct >= 100) pct = 99;
+  }
 
   return (
     <Card style={{ marginBottom: 16 }}>
@@ -43,7 +98,11 @@ export function OperationProgressPanel({
           <SplitItem isFilled><h2>{label}</h2></SplitItem>
           <SplitItem><Button variant="secondary" onClick={onCancel}>Cancel</Button></SplitItem>
         </Split>
-        <Progress value={undefined} style={{ marginTop: 16 }} />
+        <Progress
+          value={pct}
+          measureLocation={pct != null ? 'outside' : 'none'}
+          style={{ marginTop: 16 }}
+        />
         <div className="apme-timeline" style={{ marginTop: 16, maxHeight: 200, overflowY: 'auto' }}>
           {progress.map((entry, i) => (
             <div key={i} className="apme-timeline-entry">

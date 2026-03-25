@@ -13,7 +13,7 @@
 | **R1** ARI Integration | Use ARI as a pip dependency via `ARIScanner` | Fully integrated the engine into `src/apme_engine/engine/`; first-class owned code, not an external dep |
 | **R2** Programmatic API | Call `ARIScanner(Config(...)).evaluate()` | Our own `runner.py` + `ScanContext` wrapping the integrated engine; same pipeline, owned code |
 | **R3** x2a-convertor Patterns | Click CLI, BaseAgent, ValidationService, ARIValidator, ARIScanTool | argparse CLI, gRPC daemon, unified `Validator` protocol over gRPC; no x2a-convertor dependency |
-| **R6** Output Directory | Write corrected files to `--output-dir ./modernized/` | `format --apply` writes in-place; `FormatResult.diff` for diffing; `fix` will follow the same model |
+| **R6** Output Directory | Write corrected files to `--output-dir ./modernized/` | `format --apply` writes in-place; `FormatResult.diff` for diffing; `remediate` follows the same model |
 | **R9** Test Data | Synthetic fixture directories per category | Colocated `*_test.py` / `*_test.rego` per rule + `.md` docs with frontmatter examples; integration via `test_e2e.py` |
 
 ### Partially Addressed — Core Concepts Adopted
@@ -30,7 +30,7 @@
 | Section | Concept | Value |
 |---------|---------|-------|
 | **R4** `is_finding_resolvable()` | Single decision point partitioning findings into auto-fixable vs manual/AI | Essential for Phase 2 modernization engine to decide what can be auto-fixed vs what needs AI |
-| **R4** Multi-pass convergence | scan → fix → rescan → bail on oscillation | Core loop for the `fix` subcommand's modernization phase |
+| **R4** Multi-pass convergence | check → remediate → re-check → bail on oscillation | Core loop for the `remediate` subcommand's modernization phase |
 | **R4** AI prompt template | Structured LLM prompt with finding context + 10-line code window | Starting point for Phase 3 OpenLLM integration |
 | **R5** Auto-detection signals | Short-form modules → ≤2.9, `include:` → ≤2.7, `tower_*` → ≤2.13 | Auto-scopes M-rules without explicit `--ansible-core-version` flag |
 | **R7** SEC001–SEC003 | Hardcoded passwords, API keys, private keys (regex-based) | **Implemented** via Gitleaks validator (800+ patterns, supersedes the 3 research rules) |
@@ -49,18 +49,18 @@ def is_finding_resolvable(rule_result) -> bool:
     return getattr(rule_result.rule, 'spec_mutation', False)
 ```
 
-This maps cleanly to our validator model. Each rule could declare a `fixable: bool` attribute on its metadata. The `fix` pipeline would use this to decide whether to attempt automatic remediation or defer to the AI service. This should be a property on our rule metadata base class, not inferred via `getattr`.
+This maps cleanly to our validator model. Each rule could declare a `fixable: bool` attribute on its metadata. The `remediate` pipeline would use this to decide whether to attempt automatic remediation or defer to the AI service. This should be a property on our rule metadata base class, not inferred via `getattr`.
 
 ### 2. Multi-Pass Convergence Algorithm
 
 The algorithm from R2/R4:
 1. Count fixable violations
 2. Apply fixes
-3. Re-scan
+3. Re-check (internal re-scan)
 4. If count decreased → repeat (up to `--max-passes`)
 5. If count unchanged or increased → oscillation, bail out
 
-This is the correct approach for our `fix` subcommand's modernization phase. The formatter already has `check_idempotent()` as a simpler form of this; the modernizer needs the full convergence loop with oscillation detection.
+This is the correct approach for our `remediate` subcommand's modernization phase. The formatter already has `check_idempotent()` as a simpler form of this; the modernizer needs the full convergence loop with oscillation detection.
 
 ### 3. Security Rules — Implemented via Gitleaks
 

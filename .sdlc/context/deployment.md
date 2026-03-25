@@ -38,23 +38,23 @@ This builds nine images:
 ./containers/podman/up.sh
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with eight containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Gateway, UI). A sessions directory and gateway data directory are created for session-scoped venvs and persistent scan data.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with eight containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Gateway, UI). A sessions directory and gateway data directory are created for session-scoped venvs and persistent activity data.
 
 ### Run CLI Commands
 
 ```bash
 cd /path/to/your/ansible/project
-/path/to/apme/containers/podman/run-cli.sh              # scan (default)
-/path/to/apme/containers/podman/run-cli.sh scan --json . # JSON output
-/path/to/apme/containers/podman/run-cli.sh fix --check . # dry-run fix
-/path/to/apme/containers/podman/run-cli.sh fix .         # apply Tier 1 fixes
+/path/to/apme/containers/podman/run-cli.sh                # check (default)
+/path/to/apme/containers/podman/run-cli.sh check --json . # JSON output
+/path/to/apme/containers/podman/run-cli.sh remediate --check . # dry-run remediate
+/path/to/apme/containers/podman/run-cli.sh remediate .   # apply Tier 1 fixes
 /path/to/apme/containers/podman/run-cli.sh format --check .
 /path/to/apme/containers/podman/run-cli.sh health-check
 ```
 
-The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `fix`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
+The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
 
-The `fix` command uses a **bidirectional streaming RPC** (`FixSession`, ADR-028) for real-time progress and interactive AI proposal review.
+The **`remediate`** command uses a **bidirectional streaming RPC** (`FixSession`, ADR-028, ADR-039) for real-time progress and interactive AI proposal review. **`check`** uses the same `FixSession` path in dry-run mode (ADR-039).
 
 ### Stop the Pod
 
@@ -167,9 +167,9 @@ pip install -e ".[dev]"
 python -m apme_engine.cli daemon start
 
 # Run commands (same thin CLI, talks to local daemon via gRPC)
-python -m apme_engine.cli scan /path/to/project
-python -m apme_engine.cli fix --check .
-python -m apme_engine.cli fix .
+python -m apme_engine.cli check /path/to/project
+python -m apme_engine.cli remediate --check .
+python -m apme_engine.cli remediate .
 
 # Stop the daemon
 python -m apme_engine.cli daemon stop
@@ -241,3 +241,4 @@ cd /your/project && /path/to/run-cli.sh
 - [ADR-006](/.sdlc/adrs/ADR-006-ephemeral-venvs.md) — Ephemeral venvs for Ansible (superseded by ADR-022/ADR-031)
 - [ADR-024](/.sdlc/adrs/ADR-024-thin-cli-daemon-mode.md) — Thin CLI with local daemon mode
 - [ADR-028](/.sdlc/adrs/ADR-028-session-based-fix-workflow.md) — Session-based fix workflow (FixSession bidi stream)
+- [ADR-039](/.sdlc/adrs/ADR-039-unified-operation-stream.md) — Unified check/remediate via `FixSession`; `ScanStream` removed

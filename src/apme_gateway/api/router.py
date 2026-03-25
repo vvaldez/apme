@@ -1,9 +1,9 @@
 """REST and WebSocket API endpoints for the gateway (ADR-029, ADR-037).
 
-Read endpoints serve persisted scan data.  Write operations happen via the
+Read endpoints serve persisted check/remediate activity.  Write operations happen via the
 gRPC Reporting servicer (engine push model, ADR-020).  The ``WS /ws/session``
 endpoint bridges the browser to Primary's FixSession gRPC stream for the
-playground scan + fix lifecycle (ADR-029).  Project operations use the new
+playground check + remediate lifecycle (ADR-029).  Project operations use the new
 ``WS /projects/{id}/ws/operate`` endpoint (ADR-037).
 """
 
@@ -19,21 +19,22 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket
 from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
 from apme_gateway.api.schemas import (
+    ActivityDetail,
+    ActivitySummary,
     AiAcceptanceEntry,
     AiModelInfo,
     ComponentHealth,
     CreateProjectRequest,
     DashboardSummary,
-    FixRateEntry,
     HealthStatus,
     LogEntry,
     PaginatedResponse,
+    PatchDetail,
     ProjectDetail,
     ProjectRanking,
     ProjectSummary,
     ProposalDetail,
-    ScanDetail,
-    ScanSummary,
+    RemediationRateEntry,
     SessionDetail,
     SessionSummary,
     TopViolation,
@@ -181,8 +182,12 @@ async def list_ai_models() -> list[AiModelInfo]:
     try:
         stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
         resp = await stub.ListAIModels(primary_pb2.ListAIModelsRequest(), timeout=5)
-        return [AiModelInfo(id=m.id, provider=m.provider, name=m.name) for m in resp.models]
+        models = [AiModelInfo(id=m.id, provider=m.provider, name=m.name) for m in resp.models]
+        if not models:
+            logger.warning("ListAIModels returned 0 models from Primary at %s", primary_addr)
+        return models
     except Exception:
+        logger.warning("Failed to fetch AI models from Primary at %s", primary_addr, exc_info=True)
         return []
     finally:
         await channel.close(grace=None)
@@ -272,10 +277,10 @@ async def list_projects(
 
 
 def _compute_violation_trend(scans: list[Scan]) -> str:
-    """Derive a trend direction from recent scan violation counts.
+    """Derive a trend direction from recent run violation counts.
 
     Args:
-        scans: Recent Scan ORM objects ordered oldest-first (asc).
+        scans: Recent Scan ORM rows ordered oldest-first (asc).
 
     Returns:
         One of ``"improving"``, ``"declining"``, or ``"stable"``.
@@ -292,7 +297,7 @@ def _compute_violation_trend(scans: list[Scan]) -> str:
 
 @router.get("/projects/{project_id}")  # type: ignore[untyped-decorator]
 async def get_project_detail(project_id: str) -> ProjectDetail:
-    """Fetch a project with latest scan info.
+    """Fetch a project with latest activity info.
 
     Args:
         project_id: Project UUID.
@@ -307,17 +312,15 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         proj = await q.get_project(db, project_id)
         if not proj:
             raise HTTPException(status_code=404, detail="Project not found")
-        violations = await q.project_violations(db, project_id)
+        severity = await q.project_severity_breakdown(db, project_id)
         trend = await q.project_trend(db, project_id, limit=5)
         scan_cnt = await q.project_scan_count(db, project_id)
         scans = await q.project_scans(db, project_id, limit=1)
         latest = scans[0] if scans else None
-        severity: dict[str, int] = {}
-        for v in violations:
-            severity[v.level] = severity.get(v.level, 0) + 1
-    latest_summary = _scan_to_summary(latest) if latest else None
-    vt = _compute_violation_trend(trend)
-    last_scan_at = trend[-1].created_at if trend else None
+        total_v = latest.total_violations if latest else 0
+        latest_summary = _to_activity_summary(latest) if latest else None
+        vt = _compute_violation_trend(trend)
+        last_scan_at = trend[-1].created_at if trend else None
     return ProjectDetail(
         id=proj.id,
         name=proj.name,
@@ -325,7 +328,7 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
         branch=proj.branch,
         created_at=proj.created_at,
         health_score=proj.health_score,
-        total_violations=len(violations),
+        total_violations=total_v,
         violation_trend=vt,
         scan_count=scan_cnt,
         last_scanned_at=last_scan_at,
@@ -376,7 +379,7 @@ async def update_project(
 
 @router.delete("/projects/{project_id}", status_code=204)  # type: ignore[untyped-decorator]
 async def delete_project_endpoint(project_id: str) -> None:
-    """Delete a project and cascade to its scans.
+    """Delete a project and cascade to its scan rows.
 
     Args:
         project_id: Project UUID.
@@ -393,13 +396,13 @@ async def delete_project_endpoint(project_id: str) -> None:
 # ── Project-scoped endpoints (ADR-037) ───────────────────────────────
 
 
-@router.get("/projects/{project_id}/scans")  # type: ignore[untyped-decorator]
-async def list_project_scans(
+@router.get("/projects/{project_id}/activity")  # type: ignore[untyped-decorator]
+async def list_project_activity(
     project_id: str,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> PaginatedResponse:
-    """Return scans belonging to a project.
+    """Return activity (check/remediate runs) for a project.
 
     Args:
         project_id: Project UUID.
@@ -407,7 +410,7 @@ async def list_project_scans(
         offset: Page offset.
 
     Returns:
-        Paginated scan summaries.
+        Paginated activity summaries.
 
     Raises:
         HTTPException: 404 if project not found.
@@ -418,7 +421,7 @@ async def list_project_scans(
             raise HTTPException(status_code=404, detail="Project not found")
         scans = await q.project_scans(db, project_id, limit=limit, offset=offset)
         total = await q.project_scan_count(db, project_id)
-    items = [_scan_to_summary(s) for s in scans]
+    items = [_to_activity_summary(s) for s in scans]
     return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
@@ -430,7 +433,7 @@ async def list_project_violations(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[ViolationDetail]:
-    """Return violations from the latest scan of a project.
+    """Return violations from the latest check run of a project.
 
     Args:
         project_id: Project UUID.
@@ -500,7 +503,7 @@ async def project_trend_endpoint(
             scan_id=t.scan_id,
             created_at=t.created_at,
             total_violations=t.total_violations,
-            auto_fixable=t.auto_fixable,
+            fixable=t.auto_fixable,
             scan_type=t.scan_type,
         )
         for t in trend
@@ -574,13 +577,13 @@ async def list_sessions(
 
 @router.get("/sessions/{session_id}")  # type: ignore[untyped-decorator]
 async def get_session_detail(session_id: str) -> SessionDetail:
-    """Fetch a session and its scans.
+    """Fetch a session and its activity rows.
 
     Args:
         session_id: Deterministic session hash.
 
     Returns:
-        Session with embedded scan list.
+        Session with embedded activity list.
 
     Raises:
         HTTPException: 404 if session not found.
@@ -594,17 +597,17 @@ async def get_session_detail(session_id: str) -> SessionDetail:
         project_path=sess.project_path,
         first_seen=sess.first_seen,
         last_seen=sess.last_seen,
-        scans=[_scan_to_summary(s) for s in sess.scans],
+        scans=[_to_activity_summary(s) for s in sess.scans],
     )
 
 
-@router.get("/scans")  # type: ignore[untyped-decorator]
-async def list_scans(
+@router.get("/activity")  # type: ignore[untyped-decorator]
+async def list_activity(
     session_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> PaginatedResponse:
-    """List scans, optionally filtered by session.
+    """List activity, optionally filtered by session.
 
     Args:
         session_id: Optional session filter.
@@ -612,44 +615,48 @@ async def list_scans(
         offset: Row offset.
 
     Returns:
-        Paginated list of scans.
+        Paginated list of activity summaries.
     """
     async with get_session() as db:
         total = await q.scan_count(db, session_id=session_id)
         rows = await q.list_scans(db, session_id=session_id, limit=limit, offset=offset)
-    items = [_scan_to_summary(s) for s in rows]
+    items = [_to_activity_summary(s) for s in rows]
     return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
 
 
-@router.get("/scans/{scan_id}")  # type: ignore[untyped-decorator]
-async def get_scan_detail(scan_id: str) -> ScanDetail:
-    """Fetch a scan with violations, proposals, and logs.
+@router.get("/activity/{activity_id}")  # type: ignore[untyped-decorator]
+async def get_activity_detail(activity_id: str) -> ActivityDetail:
+    """Fetch one activity run with violations, proposals, and logs.
 
     Args:
-        scan_id: UUID of the scan.
+        activity_id: UUID of the run (``scans.scan_id``).
 
     Returns:
-        Full scan detail.
+        Full activity detail.
 
     Raises:
-        HTTPException: 404 if scan not found.
+        HTTPException: 404 if not found.
     """
     async with get_session() as db:
-        scan = await q.get_scan(db, scan_id)
+        scan = await q.get_scan(db, activity_id)
     if scan is None:
-        raise HTTPException(status_code=404, detail="Scan not found")
-    return ScanDetail(
+        raise HTTPException(status_code=404, detail="Activity not found")
+    display_path = scan.project.name if scan.project is not None else scan.project_path
+    return ActivityDetail(
         scan_id=scan.scan_id,
         session_id=scan.session_id,
-        project_path=scan.project_path,
+        project_path=display_path,
         source=scan.source,
         created_at=scan.created_at,
         scan_type=scan.scan_type,
         total_violations=scan.total_violations,
-        auto_fixable=scan.auto_fixable,
+        fixable=scan.auto_fixable,
         ai_candidate=scan.ai_candidate,
+        ai_proposed=scan.ai_proposed,
+        ai_declined=scan.ai_declined,
+        ai_accepted=scan.ai_accepted,
         manual_review=scan.manual_review,
-        fixed_count=scan.fixed_count,
+        remediated_count=scan.fixed_count if scan.scan_type == "remediate" else 0,
         diagnostics_json=scan.diagnostics_json,
         violations=[
             ViolationDetail(
@@ -687,30 +694,34 @@ async def get_scan_detail(scan_id: str) -> ScanDetail:
             )
             for lg in scan.logs
         ],
+        patches=[
+            PatchDetail(id=pt.id, file=pt.file, diff=pt.diff)
+            for pt in scan.patches
+        ],
     )
 
 
-@router.delete("/scans/{scan_id}", status_code=204)  # type: ignore[untyped-decorator]
-async def delete_scan(scan_id: str) -> None:
-    """Delete a scan and its related data.
+@router.delete("/activity/{activity_id}", status_code=204)  # type: ignore[untyped-decorator]
+async def delete_activity(activity_id: str) -> None:
+    """Delete an activity row and its related data.
 
     Args:
-        scan_id: UUID of the scan to delete.
+        activity_id: UUID of the run to delete (``scans.scan_id``).
 
     Raises:
-        HTTPException: 404 if scan not found.
+        HTTPException: 404 if not found.
     """
     async with get_session() as db:
-        deleted = await q.delete_scan(db, scan_id)
+        deleted = await q.delete_scan(db, activity_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail="Activity not found")
 
 
 @router.get("/violations/top")  # type: ignore[untyped-decorator]
 async def top_violations(
     limit: int = Query(default=20, ge=1, le=100),
 ) -> list[TopViolation]:
-    """Return the most frequently violated rules across all scans.
+    """Return the most frequently violated rules across all activity.
 
     Args:
         limit: Maximum number of rules to return.
@@ -746,28 +757,28 @@ async def session_trend_endpoint(session_id: str) -> list[TrendPoint]:
             scan_id=s.scan_id,
             created_at=s.created_at,
             total_violations=s.total_violations,
-            auto_fixable=s.auto_fixable,
+            fixable=s.auto_fixable,
             scan_type=s.scan_type,
         )
         for s in scans
     ]
 
 
-@router.get("/stats/fix-rates")  # type: ignore[untyped-decorator]
-async def fix_rates_endpoint(
+@router.get("/stats/remediation-rates")  # type: ignore[untyped-decorator]
+async def remediation_rates_endpoint(
     limit: int = Query(default=20, ge=1, le=100),
-) -> list[FixRateEntry]:
-    """Return most frequently violated rules in fix scans.
+) -> list[RemediationRateEntry]:
+    """Return most frequently violated rules in remediate runs.
 
     Args:
         limit: Maximum number of rules to return.
 
     Returns:
-        List of rules sorted by fix count descending.
+        List of rules sorted by remediation count descending.
     """
     async with get_session() as db:
-        rows = await q.fix_rates(db, limit=limit)
-    return [FixRateEntry(rule_id=rule_id, fix_count=count) for rule_id, count in rows]
+        rows = await q.remediation_rates(db, limit=limit)
+    return [RemediationRateEntry(rule_id=rule_id, fix_count=count) for rule_id, count in rows]
 
 
 @router.get("/stats/ai-acceptance")  # type: ignore[untyped-decorator]
@@ -791,27 +802,33 @@ async def ai_acceptance_endpoint() -> list[AiAcceptanceEntry]:
     ]
 
 
-def _scan_to_summary(scan: Scan) -> ScanSummary:
-    """Convert an ORM Scan to a ScanSummary response model.
+def _to_activity_summary(scan: Scan) -> ActivitySummary:
+    """Convert an ORM Scan row to an ActivitySummary response model.
 
     Args:
         scan: ORM Scan instance.
 
     Returns:
-        Pydantic ScanSummary.
+        Pydantic ActivitySummary.
     """
-    return ScanSummary(
+    display_path = scan.project_path
+    if scan.project is not None:
+        display_path = scan.project.name
+    return ActivitySummary(
         scan_id=scan.scan_id,
         session_id=scan.session_id,
-        project_path=scan.project_path,
+        project_path=display_path,
         source=scan.source,
         created_at=scan.created_at,
         scan_type=scan.scan_type,
         total_violations=scan.total_violations,
-        auto_fixable=scan.auto_fixable,
+        fixable=scan.auto_fixable,
         ai_candidate=scan.ai_candidate,
+        ai_proposed=scan.ai_proposed,
+        ai_declined=scan.ai_declined,
+        ai_accepted=scan.ai_accepted,
         manual_review=scan.manual_review,
-        fixed_count=scan.fixed_count,
+        remediated_count=scan.fixed_count if scan.scan_type == "remediate" else 0,
     )
 
 
@@ -823,24 +840,24 @@ async def project_operate_ws(
     websocket: WebSocket,
     project_id: str,
 ) -> None:
-    """Bidirectional WebSocket for project scan/fix operations (ADR-037).
+    """Bidirectional WebSocket for project check/remediate operations (ADR-037, ADR-038).
 
-    The client sends ``{"action": "scan"|"fix", "options": {...}}`` to start
-    an operation.  The gateway clones the repo, drives Primary via gRPC, and
-    streams progress back over the WebSocket.
+    The client sends ``{"action": "check"|"remediate", "options": {...}}`` (or
+    ``{"remediate": true}``) to start an operation.  The gateway clones the repo,
+    drives Primary ``FixSession`` via gRPC, and streams progress back over the WebSocket.
 
     Args:
         websocket: Incoming WebSocket connection.
         project_id: Target project UUID.
     """
     from apme_gateway.config import load_config
-    from apme_gateway.scan.driver import run_project_fix, run_project_scan
+    from apme_gateway.scan.driver import run_project_operation
 
     await websocket.accept()
 
     try:
         msg = await websocket.receive_json()
-        is_fix = bool(msg.get("fix", False)) or msg.get("action") == "fix"
+        is_remediate = bool(msg.get("remediate", False)) or msg.get("action") == "remediate"
         options: dict[str, object] = msg.get("options", {})
 
         async with get_session() as db:
@@ -853,18 +870,19 @@ async def project_operate_ws(
 
         op_scan_id = uuid.uuid4().hex
         started_sent = False
+        completed_scan_id: str | None = None
+        captured_patches: list[dict[str, str]] = []
+        ai_proposed_count = 0
+        ai_declined_count = 0
+        ai_accepted_count = 0
 
         async def _progress_cb(event: object) -> None:
-            """Translate gRPC protobuf events into typed WebSocket messages.
-
-            Uses ``WhichOneof`` (SessionEvent for fix) or ``HasField``
-            (ScanEvent for scan) to detect the event kind and emit the
-            structured messages the frontend hooks expect.
+            """Translate FixSession ``SessionEvent`` protobufs into WebSocket messages.
 
             Args:
-                event: gRPC ScanEvent or SessionEvent protobuf.
+                event: gRPC SessionEvent protobuf.
             """
-            nonlocal started_sent
+            nonlocal started_sent, ai_proposed_count, ai_declined_count, ai_accepted_count
 
             kind = None
             with contextlib.suppress(Exception):
@@ -884,6 +902,7 @@ async def project_operate_ws(
                         "type": "progress",
                         "phase": prog.phase or "processing",
                         "message": prog.message or "",
+                        "progress": prog.progress,
                     }
                 )
             elif kind == "proposals":
@@ -898,60 +917,94 @@ async def project_operate_ws(
                         "confidence": p.confidence,
                         "explanation": p.explanation,
                         "diff_hunk": p.diff_hunk,
+                        "status": p.status or "proposed",
+                        "suggestion": p.suggestion,
+                        "line_start": p.line_start,
                     }
                     for p in props.proposals
                 ]
+                ai_proposed_count = sum(
+                    1 for i in items if i.get("status") != "declined"
+                )
+                ai_declined_count = sum(
+                    1 for i in items if i.get("status") == "declined"
+                )
                 await websocket.send_json({"type": "proposals", "proposals": items})
             elif kind == "approval_ack":
-                await websocket.send_json({"type": "approval_ack"})
+                ack = event.approval_ack  # type: ignore[attr-defined]
+                ai_accepted_count = getattr(ack, "applied_count", 0)
+                await websocket.send_json({
+                    "type": "approval_ack",
+                    "applied_count": ai_accepted_count,
+                })
             elif kind == "result":
                 await _ensure_started()
                 res = event.result  # type: ignore[attr-defined]
-                summary = getattr(res, "summary", None)
-                if summary is not None:
-                    # ScanEvent.result → ScanResponse (has ScanSummary)
-                    await websocket.send_json(
-                        {
-                            "type": "result",
-                            "total_violations": summary.total,
-                            "auto_fixable": summary.auto_fixable,
-                            "ai_candidate": summary.ai_candidate,
-                            "manual_review": summary.manual_review,
-                        }
-                    )
-                else:
-                    # SessionEvent.result → SessionResult (has FixReport)
-                    report = getattr(res, "report", None)
-                    remaining = getattr(res, "remaining_violations", [])
-                    total = len(remaining) + (report.fixed if report else 0)
-                    await websocket.send_json(
-                        {
-                            "type": "result",
-                            "total_violations": total,
-                            "auto_fixable": 0,
-                            "ai_candidate": report.remaining_ai if report else 0,
-                            "manual_review": report.remaining_manual if report else 0,
-                            "fixed_count": report.fixed if report else 0,
-                        }
-                    )
+                report = getattr(res, "report", None)
+                remaining = getattr(res, "remaining_violations", [])
+                fixed_viols = getattr(res, "fixed_violations", [])
+                fixed = report.fixed if report else 0
+                total = len(remaining) + fixed
+
+                def _extract_line(v: object) -> int | None:
+                    if v.HasField("line"):  # type: ignore[attr-defined]
+                        return v.line  # type: ignore[attr-defined]
+                    if v.HasField("line_range"):  # type: ignore[attr-defined]
+                        return v.line_range.start  # type: ignore[attr-defined]
+                    return None
+
+                fixed_violations_json = [
+                    {
+                        "rule_id": v.rule_id,
+                        "level": v.level,
+                        "message": v.message,
+                        "file": v.file,
+                        "line": _extract_line(v),
+                        "path": v.path,
+                    }
+                    for v in fixed_viols
+                ]
+
+                result_patches = getattr(res, "patches", [])
+                patches_json = [
+                    {"file": p.path, "diff": p.diff}
+                    for p in result_patches
+                    if p.diff
+                ]
+                captured_patches.extend(patches_json)
+
+                remediated = (fixed + ai_accepted_count) if is_remediate else 0
+                await websocket.send_json(
+                    {
+                        "type": "result",
+                        "total_violations": total,
+                        "fixable": fixed,
+                        "ai_proposed": ai_proposed_count,
+                        "ai_declined": ai_declined_count,
+                        "ai_accepted": ai_accepted_count,
+                        "manual_review": report.remaining_manual if report else 0,
+                        "remediated_count": remediated,
+                        "fixed_violations": fixed_violations_json,
+                        "patches": patches_json,
+                    }
+                )
 
         raw_specs = options.get("collection_specs", [])
         specs = [str(s) for s in raw_specs] if isinstance(raw_specs, list) else []
 
         await websocket.send_json({"type": "cloning"})
 
-        completed_scan_id: str | None = None
-
-        if is_fix:
+        if is_remediate:
             approval_queue: asyncio.Queue[list[str]] = asyncio.Queue()
-            fix_result: tuple[str, object] | None = None
+            op_result: tuple[str, object] | None = None
 
-            async def _run_fix() -> tuple[str, object]:
-                return await run_project_fix(
+            async def _run_op() -> tuple[str, object]:
+                return await run_project_operation(
                     project_id=proj.id,
                     repo_url=proj.repo_url,
                     branch=proj.branch,
                     primary_address=cfg.primary_address,
+                    remediate=True,
                     ansible_version=str(options.get("ansible_version", "")),
                     collection_specs=specs,
                     enable_ai=bool(options.get("enable_ai", True)),
@@ -961,9 +1014,9 @@ async def project_operate_ws(
                     scan_id=op_scan_id,
                 )
 
-            fix_task = asyncio.create_task(_run_fix())
+            op_task = asyncio.create_task(_run_op())
             try:
-                while not fix_task.done():
+                while not op_task.done():
                     try:
                         client_msg = await asyncio.wait_for(
                             websocket.receive_json(),
@@ -978,22 +1031,23 @@ async def project_operate_ws(
                         approved = [str(i) for i in ids] if isinstance(ids, list) else []
                         await approval_queue.put(approved)
                     elif msg_type == "cancel":
-                        fix_task.cancel()
+                        op_task.cancel()
                         break
             finally:
-                if not fix_task.done():
-                    fix_task.cancel()
+                if not op_task.done():
+                    op_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
-                    fix_result = await fix_task
+                    op_result = await op_task
 
-            if fix_result is not None:
-                completed_scan_id = fix_result[0]
+            if op_result is not None:
+                completed_scan_id = op_result[0]
         else:
-            scan_id, _result = await run_project_scan(
+            scan_id, _result = await run_project_operation(
                 project_id=proj.id,
                 repo_url=proj.repo_url,
                 branch=proj.branch,
                 primary_address=cfg.primary_address,
+                remediate=False,
                 ansible_version=str(options.get("ansible_version", "")),
                 collection_specs=specs,
                 progress_callback=_progress_cb,
@@ -1002,17 +1056,30 @@ async def project_operate_ws(
             completed_scan_id = scan_id
 
         if completed_scan_id:
+            op_scan_type = "remediate" if is_remediate else "check"
             async with get_session() as db:
-                await q.link_scan_to_project(db, completed_scan_id, proj.id, trigger="ui")
+                await q.link_scan_to_project(
+                    db, completed_scan_id, proj.id,
+                    trigger="ui", scan_type=op_scan_type,
+                )
+                await q.update_ai_counts(
+                    db, completed_scan_id,
+                    ai_proposed=ai_proposed_count,
+                    ai_declined=ai_declined_count,
+                    ai_accepted=ai_accepted_count,
+                )
+                if captured_patches:
+                    await q.store_patches(db, completed_scan_id, captured_patches)
                 await q.update_project_health(db, proj.id)
 
         await websocket.send_json({"type": "closed"})
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for project %s", project_id)
-    except Exception:
+    except Exception as exc:
         logger.exception("Error during project operation for %s", project_id)
+        detail = f"{type(exc).__name__}: {exc}"
         with contextlib.suppress(Exception):
-            await websocket.send_json({"type": "error", "message": "Internal server error"})
+            await websocket.send_json({"type": "error", "message": detail})
     finally:
         with contextlib.suppress(Exception):
             await websocket.close()
@@ -1029,7 +1096,7 @@ async def session_ws(
 ) -> None:
     """Bidirectional WebSocket bridge to Primary's FixSession gRPC stream.
 
-    Handles the full scan + fix lifecycle: file upload, real-time progress,
+    Handles the full check + remediate lifecycle: file upload, real-time progress,
     Tier 1 auto-fix results, AI proposal delivery, interactive approval,
     and final session results — all over a single connection.
 

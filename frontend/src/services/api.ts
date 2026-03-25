@@ -1,16 +1,16 @@
 import type {
+  ActivityDetail,
+  ActivitySummary,
   AiAcceptanceEntry,
   AiModelInfo,
   CreateProjectRequest,
   DashboardSummary,
-  FixRateEntry,
   HealthStatus,
   PaginatedResponse,
   ProjectDetail,
   ProjectRanking,
   ProjectSummary,
-  ScanDetail,
-  ScanSummary,
+  RemediationRateEntry,
   SessionDetail,
   SessionSummary,
   TopViolation,
@@ -44,22 +44,22 @@ export function listSessions(
   return request(`/sessions?limit=${limit}&offset=${offset}`);
 }
 
-export function listScans(
+export function listActivity(
   limit = 50,
   offset = 0,
   sessionId?: string,
-): Promise<PaginatedResponse<ScanSummary>> {
-  let url = `/scans?limit=${limit}&offset=${offset}`;
+): Promise<PaginatedResponse<ActivitySummary>> {
+  let url = `/activity?limit=${limit}&offset=${offset}`;
   if (sessionId) url += `&session_id=${sessionId}`;
   return request(url);
 }
 
-export function getScan(scanId: string): Promise<ScanDetail> {
-  return request(`/scans/${scanId}`);
+export function getActivity(scanId: string): Promise<ActivityDetail> {
+  return request(`/activity/${scanId}`);
 }
 
-export async function deleteScan(scanId: string): Promise<void> {
-  const res = await fetch(`${BASE}/scans/${scanId}`, { method: "DELETE" });
+export async function deleteActivity(scanId: string): Promise<void> {
+  const res = await fetch(`${BASE}/activity/${scanId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -75,8 +75,8 @@ export function getSessionTrend(sessionId: string): Promise<TrendPoint[]> {
   return request(`/sessions/${sessionId}/trend`);
 }
 
-export function getFixRates(limit = 20): Promise<FixRateEntry[]> {
-  return request(`/stats/fix-rates?limit=${limit}`);
+export function getRemediationRates(limit = 20): Promise<RemediationRateEntry[]> {
+  return request(`/stats/remediation-rates?limit=${limit}`);
 }
 
 export function getAiAcceptance(): Promise<AiAcceptanceEntry[]> {
@@ -126,12 +126,12 @@ export async function deleteProject(projectId: string): Promise<void> {
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
-export function listProjectScans(
+export function listProjectActivity(
   projectId: string,
   limit = 50,
   offset = 0,
-): Promise<PaginatedResponse<ScanSummary>> {
-  return request(`/projects/${projectId}/scans?limit=${limit}&offset=${offset}`);
+): Promise<PaginatedResponse<ActivitySummary>> {
+  return request(`/projects/${projectId}/activity?limit=${limit}&offset=${offset}`);
 }
 
 export function listProjectViolations(

@@ -631,9 +631,9 @@ class TestNoAnsiFlag:
         global_opts = argparse.ArgumentParser(add_help=False)
         global_opts.add_argument("--na", "--no-ansi", action="store_true", default=False, dest="no_ansi")
         subs = parser.add_subparsers(dest="command", required=True)
-        scan = subs.add_parser("scan", parents=[global_opts])
-        scan.add_argument("target", nargs="?", default=".")
-        args = parser.parse_args(["scan", "--no-ansi", "."])
+        check = subs.add_parser("check", parents=[global_opts])
+        check.add_argument("target", nargs="?", default=".")
+        args = parser.parse_args(["check", "--no-ansi", "."])
         assert args.no_ansi is True
 
     def test_no_ansi_disables_color_via_main(self) -> None:
@@ -644,8 +644,8 @@ class TestNoAnsiFlag:
 
         with (
             patch("apme_engine.cli.ansi.force_no_color") as mock_fnc,
-            patch("apme_engine.cli.scan.run_scan"),
-            patch("sys.argv", ["apme-scan", "scan", "--no-ansi", "."]),
+            patch("apme_engine.cli.check.run_check"),
+            patch("sys.argv", ["apme-scan", "check", "--no-ansi", "."]),
         ):
             cli_module.main()
         mock_fnc.assert_called_once()

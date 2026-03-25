@@ -1,7 +1,7 @@
 /**
  * WebSocket hook for the FixSession lifecycle.
  *
- * Manages the full scan+fix flow over a single WS connection:
+ * Manages the full check+remediate flow over a single WS connection:
  *   connect → upload files → progress → tier1 results →
  *   AI proposals → approval → final result
  *
@@ -48,6 +48,8 @@ export interface Proposal {
   confidence: number;
   explanation: string;
   tier: number;
+  status?: 'proposed' | 'declined';
+  suggestion?: string;
 }
 
 export interface RemainingViolation {
@@ -68,7 +70,7 @@ export type SessionStatus =
   | "idle"
   | "connecting"
   | "uploading"
-  | "scanning"
+  | "checking"
   | "tier1_done"
   | "awaiting_approval"
   | "applying"
@@ -163,7 +165,7 @@ export function useSessionStream() {
             setSessionId(msg.session_id as string);
             sessionIdRef.current = msg.session_id as string;
             setScanId(msg.scan_id as string);
-            updateStatus("scanning");
+            updateStatus("checking");
             break;
 
           case "progress":
@@ -322,7 +324,7 @@ export function useSessionStream() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        updateStatus("scanning");
+        updateStatus("checking");
       };
 
       wireHandlers(ws);

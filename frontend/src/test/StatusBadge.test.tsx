@@ -13,14 +13,24 @@ describe("StatusBadge", () => {
     expect(screen.getByText(/3 ISSUES/)).toBeInTheDocument();
   });
 
-  it("shows FIXED when violations = 0 and type is fix", () => {
+  it("shows Remediate when violations = 0 and type is fix", () => {
     render(<StatusBadge violations={0} scanType="fix" />);
-    expect(screen.getByText(/FIXED/)).toBeInTheDocument();
+    expect(screen.getByText(/Remediate/)).toBeInTheDocument();
   });
 
-  it("shows CLEAN when violations = 0 and type is scan", () => {
+  it("shows Remediate when violations = 0 and type is remediate", () => {
+    render(<StatusBadge violations={0} scanType="remediate" />);
+    expect(screen.getByText(/Remediate/)).toBeInTheDocument();
+  });
+
+  it("shows Check when violations = 0 and type is scan", () => {
     render(<StatusBadge violations={0} scanType="scan" />);
-    expect(screen.getByText(/CLEAN/)).toBeInTheDocument();
+    expect(screen.getByText(/Check/)).toBeInTheDocument();
+  });
+
+  it("shows Check when violations = 0 and type is check", () => {
+    render(<StatusBadge violations={0} scanType="check" />);
+    expect(screen.getByText(/Check/)).toBeInTheDocument();
   });
 
   it("applies failed class when violations > 0", () => {

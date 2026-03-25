@@ -40,6 +40,21 @@
   color: var(--apme-sev-low);
 }
 
+.apme-badge.fixable {
+  background-color: rgba(91, 163, 82, 0.2);
+  color: var(--apme-green);
+}
+
+.apme-badge.ai {
+  background-color: rgba(66, 165, 245, 0.2);
+  color: var(--apme-sev-low);
+}
+
+.apme-badge.manual {
+  background-color: rgba(255, 152, 0, 0.2);
+  color: var(--apme-sev-high);
+}
+
 .apme-rule-id {
   font-family: var(--pf-t--global--font--family--mono);
   font-size: 12px;
@@ -183,9 +198,34 @@
   font-size: 13px;
 }
 
+.apme-fixable-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px 10px 40px;
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+  background: rgba(91, 163, 82, 0.06);
+}
+
 .apme-violation-message {
   flex: 1;
   min-width: 0;
+}
+
+.apme-diff-block {
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+  background: var(--pf-t--global--background--color--secondary--default);
+  padding: 0;
+  overflow-x: auto;
+}
+
+.apme-diff-block pre {
+  margin: 0;
+  padding: 12px 20px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  font-family: var(--pf-t--global--font--family--mono);
 }
 
 /* ── Filter popover ─────────────────────────────────── */
@@ -446,6 +486,7 @@
   height: 100%;
   border-radius: 3px;
   transition: width 0.3s;
+  background: var(--pf-t--global--color--status--success--default, #5ba352);
 }
 
 .apme-confidence-label {
@@ -459,6 +500,11 @@
   font-size: 13px;
   opacity: 0.8;
   border-top: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.apme-proposal-declined {
+  opacity: 0.75;
+  border-style: dashed;
 }
 
 .apme-proposal-diff {

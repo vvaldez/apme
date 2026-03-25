@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from apme.v1 import primary_pb2
 from apme_gateway.scan.driver import clone_repo, derive_session_id, run_project_scan
 
 
@@ -73,8 +74,8 @@ async def _async_iter(
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_run_project_scan_full_flow() -> None:
-    """Verify run_project_scan clones, chunks, and streams to Primary."""
-    mock_chunks = [MagicMock()]
+    """Verify run_project_scan clones, chunks, and streams FixSession (check mode)."""
+    mock_chunks = [primary_pb2.ScanChunk(last=True, scan_id="test-scan")]
 
     progress_events: list[object] = []
 
@@ -86,16 +87,21 @@ async def test_run_project_scan_full_flow() -> None:
         patch("apme_gateway.scan.driver.yield_scan_chunks", return_value=mock_chunks),
         patch("apme_gateway.scan.driver.grpc.aio.insecure_channel") as mock_channel_cls,
     ):
+        mock_report = MagicMock()
+        mock_report.fixed = 0
+        mock_report.remaining_ai = 0
+        mock_report.remaining_manual = 0
+
         mock_result = MagicMock()
-        mock_result.summary.total = 5
-        mock_result.summary.auto_fixable = 2
+        mock_result.report = mock_report
+        mock_result.remaining_violations = []
 
         mock_event = MagicMock()
-        mock_event.HasField.return_value = True
+        mock_event.WhichOneof.return_value = "result"
         mock_event.result = mock_result
 
         mock_stub = MagicMock()
-        mock_stub.ScanStream.return_value = _async_iter([mock_event])
+        mock_stub.FixSession.return_value = _async_iter([mock_event])
 
         mock_channel = MagicMock()
         mock_channel.close = AsyncMock()

@@ -171,7 +171,7 @@ def format_remediation_summary(
     return ", ".join(parts) if parts else "none"
 
 
-def render_scan_results(
+def render_check_results(
     violations: list[ViolationDict],
     scan_id: str = "",
     scan_time_ms: float | None = None,
@@ -215,7 +215,7 @@ def render_scan_results(
     if scan_time_ms is not None:
         summary_lines.append(f"Time: {fmt_ms(scan_time_ms)}")
 
-    print(box("\n".join(summary_lines), title="Scan Results"))
+    print(box("\n".join(summary_lines), title="Check Results"))
     print()
 
     if not violations:

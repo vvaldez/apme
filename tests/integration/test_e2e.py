@@ -142,7 +142,7 @@ def scan_result(pod: None) -> YAMLDict:
             "--entrypoint",
             "apme-scan",
             CLI_IMAGE,
-            "scan",
+            "check",
             "--json",
             ".",
         ]

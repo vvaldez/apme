@@ -59,13 +59,13 @@ This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `a
 ```bash
 cd /path/to/your/ansible/project
 
-# Scan (default: scan .)
+# Check (policy validation; default target is `.` when your wrapper passes it)
 /path/to/apme/containers/podman/run-cli.sh
-/path/to/apme/containers/podman/run-cli.sh scan --json .
+/path/to/apme/containers/podman/run-cli.sh check --json .
 
-# Fix (Tier 1 deterministic fixes)
-containers/podman/run-cli.sh fix --check .   # dry-run
-containers/podman/run-cli.sh fix .           # apply
+# Remediate (Tier 1 deterministic fixes; `FixSession` RPC)
+containers/podman/run-cli.sh remediate --check .   # dry-run
+containers/podman/run-cli.sh remediate .           # apply
 
 # Format (YAML normalization)
 containers/podman/run-cli.sh format --check .
@@ -74,9 +74,9 @@ containers/podman/run-cli.sh format --check .
 containers/podman/run-cli.sh health-check
 ```
 
-The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `fix`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
+The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
 
-The `fix` command uses a bidirectional streaming RPC (`FixSession`, ADR-028) for real-time progress and interactive AI proposal review.
+The `remediate` command uses a bidirectional streaming RPC (`FixSession`, ADR-028, ADR-039) for real-time progress and interactive AI proposal review. **`check`** uses the same `FixSession` RPC in check mode.
 
 ### Stop the pod
 
@@ -108,7 +108,7 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks) with la
 | `OPA_GRPC_ADDRESS` | — | OPA validator address (e.g., `127.0.0.1:50054`) |
 | `ANSIBLE_GRPC_ADDRESS` | — | Ansible validator address (e.g., `127.0.0.1:50053`) |
 | `GITLEAKS_GRPC_ADDRESS` | — | Gitleaks validator address (e.g., `127.0.0.1:50056`) |
-| `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each scan/fix. |
+| `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each check or remediate run. |
 | `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`). Supports `host:port` and `unix://` formats. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |
 | `APME_AI_MODEL` | — | Default AI model ID (e.g., `anthropic/claude-sonnet-4`). Overridden by UI Settings or CLI `--model`. |
@@ -213,9 +213,9 @@ pip install -e ".[dev]"
 python -m apme_engine.cli daemon start
 
 # Run commands (thin CLI talks to local daemon via gRPC)
-python -m apme_engine.cli scan /path/to/project
-python -m apme_engine.cli fix --check .
-python -m apme_engine.cli fix .
+python -m apme_engine.cli check /path/to/project
+python -m apme_engine.cli remediate --check .
+python -m apme_engine.cli remediate .
 
 # Stop the daemon
 python -m apme_engine.cli daemon stop

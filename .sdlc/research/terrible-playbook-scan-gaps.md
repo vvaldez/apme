@@ -4,7 +4,7 @@ Comparison of what the playbook was designed to trigger (from inline comments) v
 
 ## Current scan summary
 
-- **Latest run:** terrible-playbook dir, chunked ScanStream; 124 issues (9 error, 80 warning, 21 info, 14 hint); **49 unique rule IDs** reported.
+- **Latest run:** terrible-playbook dir, check via `FixSession` (ADR-039: `ScanStream` removed); 124 issues (9 error, 80 warning, 21 info, 14 hint); **49 unique rule IDs** reported.
 - **Sources:** Native + OPA + Ansible (Gitleaks 0).
 - **Note:** Native validator was fixed (jsonpickle handler for AnsibleRunContext); it now contributes violations.
 
@@ -75,7 +75,7 @@ Rules the playbook was designed to trigger, as documented in comments:
 
 ## Reported in latest scan (unique rule IDs)
 
-From `run-cli.sh --json .` on terrible-playbook (chunked gRPC), rule_id with native: prefix stripped:
+From `run-cli.sh check --json .` on terrible-playbook (chunked gRPC / `FixSession` check path), rule_id with native: prefix stripped:
 
 **Reported (47):** L002, L003, L005, L006, L007, L008, L009, L010, L011, L012, L013, L014, L015, L016, L018, L020, L021, L022, L024, L025, L027, L032, L033, L036, L037, L038, L039, L042, L043, L044, L045, L046, L047, L048, L049, L050, L051, L057, M006, M009, M010, R104, R108, R111, R112, R113, R402
 

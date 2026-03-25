@@ -30,32 +30,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ── scan ──
-    scan_p = subparsers.add_parser(
-        "scan",
+    # ── check ──
+    check_p = subparsers.add_parser(
+        "check",
         parents=[global_opts],
-        help="Scan a playbook, role, or project for policy violations",
+        help="Check: format + remediate (dry-run) — shows what would change",
     )
-    scan_p.add_argument("target", nargs="?", default=".", help="Path to playbook, role, or project")
-    scan_p.add_argument("--json", action="store_true", help="Output violations as JSON")
-    scan_p.add_argument(
+    check_p.add_argument("target", nargs="?", default=".", help="Path to playbook, role, or project")
+    check_p.add_argument("--diff", action="store_true", help="Show unified diffs of what remediate would change")
+    check_p.add_argument("--json", action="store_true", help="Output violations as JSON (includes diffs)")
+    check_p.add_argument(
         "--ansible-version",
         default=None,
         help="ansible-core version for validation (e.g. 2.18, 2.20)",
     )
-    scan_p.add_argument(
+    check_p.add_argument(
         "--collections",
         nargs="*",
         default=None,
         help="Collection specs to make available (e.g. community.general:9.0.0)",
     )
-    scan_p.add_argument(
+    check_p.add_argument(
         "--timeout",
         type=int,
         default=120,
         help="gRPC timeout in seconds (default: 120)",
     )
-    scan_p.add_argument(
+    check_p.add_argument(
         "--session",
         default=None,
         help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
@@ -77,52 +78,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
     )
 
-    # ── fix ──
-    fix_p = subparsers.add_parser(
-        "fix",
+    # ── remediate ──
+    remediate_p = subparsers.add_parser(
+        "remediate",
         parents=[global_opts],
-        help="Format + scan + remediate: full fix pipeline",
+        help="Remediate: format + auto-fix, writes changes to disk",
     )
-    fix_p.add_argument("target", nargs="?", default=".", help="Path to file or directory")
-    fix_p.add_argument("--apply", action="store_true", help="Write changes in place")
-    fix_p.add_argument("--check", action="store_true", help="Exit 1 if changes would be made (CI mode)")
-    fix_p.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
-    fix_p.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
-    fix_p.add_argument(
+    remediate_p.add_argument("target", nargs="?", default=".", help="Path to file or directory")
+    remediate_p.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
+    remediate_p.add_argument(
         "--ansible-version",
         default=None,
         help="ansible-core version for validation (e.g. 2.18, 2.20)",
     )
-    fix_p.add_argument(
+    remediate_p.add_argument(
         "--collections",
         nargs="*",
         default=None,
         help="Collection specs to make available (e.g. community.general:9.0.0)",
     )
-    fix_p.add_argument(
+    remediate_p.add_argument(
         "--auto-approve",
         action="store_true",
         default=False,
         help="Approve all AI proposals without prompting (CI mode)",
     )
-    fix_p.add_argument(
+    remediate_p.add_argument(
         "--ai",
         action="store_true",
         default=False,
         help="Enable Tier 2 AI-assisted remediation",
     )
-    fix_p.add_argument(
+    remediate_p.add_argument(
         "--model",
         default=None,
         help=("AI model identifier (e.g. 'openai/gpt-4o'); falls back to APME_AI_MODEL env var"),
     )
-    fix_p.add_argument(
+    remediate_p.add_argument(
         "--json",
         action="store_true",
         default=False,
         help="Output structured data payloads as JSON",
     )
-    fix_p.add_argument(
+    remediate_p.add_argument(
         "--session",
         default=None,
         help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",

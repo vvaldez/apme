@@ -8,8 +8,8 @@ import {
   SplitItem,
   ExpandableSection,
 } from '@patternfly/react-core';
-import { deleteScan, getScan } from '../services/api';
-import type { ScanDetail, ViolationDetail } from '../types/api';
+import { deleteActivity, getActivity } from '../services/api';
+import type { ActivityDetail, ViolationDetail } from '../types/api';
 import { getRuleDescription } from '../data/ruleDescriptions';
 
 function groupByFile(violations: ViolationDetail[]): Map<string, ViolationDetail[]> {
@@ -69,10 +69,23 @@ function severityOrder(cls: string): number {
 }
 
 function tierLabel(rc: number): string {
-  if (rc === 1) return 'Auto-Fix';
+  if (rc === 1) return 'Fixable';
   if (rc === 2) return 'AI';
   if (rc === 3) return 'Manual';
   return '';
+}
+
+function tierBadgeClass(rc: number): string {
+  if (rc === 1) return 'apme-badge fixable';
+  if (rc === 2) return 'apme-badge ai';
+  if (rc === 3) return 'apme-badge manual';
+  return 'apme-badge';
+}
+
+function displayType(scanType: string): string {
+  if (scanType === 'scan') return 'check';
+  if (scanType === 'fix') return 'remediate';
+  return scanType;
 }
 
 const SEVERITY_ORDER = ['critical', 'error', 'very-high', 'high', 'medium', 'warning', 'low', 'very-low', 'hint'];
@@ -164,12 +177,13 @@ function FilterPopover({ sevFilters, ruleFilters, sevCounts, uniqueRules, onSevC
   );
 }
 
-export function ScanDetailPage() {
-  const { scanId } = useParams<{ scanId: string }>();
+export function ActivityDetailPage() {
+  const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
-  const [scan, setScan] = useState<ScanDetail | null>(null);
+  const [detail, setDetail] = useState<ActivityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [diffExpanded, setDiffExpanded] = useState<Set<string>>(new Set());
   const [sevFilters, setSevFilters] = useState<Set<string>>(new Set());
   const [ruleFilters, setRuleFilters] = useState<Set<string>>(new Set());
   const [logsOpen, setLogsOpen] = useState(false);
@@ -177,13 +191,13 @@ export function ScanDetailPage() {
   const filterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!scanId) return;
+    if (!activityId) return;
     setLoading(true);
-    getScan(scanId)
-      .then(setScan)
-      .catch(() => setScan(null))
+    getActivity(activityId)
+      .then(setDetail)
+      .catch(() => setDetail(null))
       .finally(() => setLoading(false));
-  }, [scanId]);
+  }, [activityId]);
 
   useEffect(() => {
     if (!filterOpen) return;
@@ -195,25 +209,25 @@ export function ScanDetailPage() {
   }, [filterOpen]);
 
   const sevCounts = useMemo(() => {
-    if (!scan) return new Map<string, number>();
+    if (!detail) return new Map<string, number>();
     const counts = new Map<string, number>();
-    for (const v of scan.violations) {
+    for (const v of detail.violations) {
       const cls = severityClass(v.level, v.rule_id);
       counts.set(cls, (counts.get(cls) ?? 0) + 1);
     }
     return counts;
-  }, [scan]);
+  }, [detail]);
 
   const uniqueRules = useMemo(() => {
-    if (!scan) return [] as string[];
+    if (!detail) return [] as string[];
     const set = new Set<string>();
-    for (const v of scan.violations) set.add(v.rule_id);
+    for (const v of detail.violations) set.add(v.rule_id);
     return Array.from(set).sort();
-  }, [scan]);
+  }, [detail]);
 
   const filtered = useMemo(() => {
-    if (!scan) return [];
-    let violations = scan.violations;
+    if (!detail) return [];
+    let violations = detail.violations;
     if (sevFilters.size > 0) {
       violations = violations.filter((v) => sevFilters.has(severityClass(v.level, v.rule_id)));
     }
@@ -221,12 +235,21 @@ export function ScanDetailPage() {
       violations = violations.filter((v) => ruleFilters.has(v.rule_id));
     }
     return violations;
-  }, [scan, sevFilters, ruleFilters]);
+  }, [detail, sevFilters, ruleFilters]);
 
   const groups = useMemo(() => groupByFile(filtered), [filtered]);
 
+  const patchByFile = useMemo(() => {
+    if (!detail) return new Map<string, string>();
+    const map = new Map<string, string>();
+    for (const p of detail.patches) {
+      map.set(p.file, p.diff);
+    }
+    return map;
+  }, [detail]);
+
   if (loading) return <PageLayout><div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>Loading...</div></PageLayout>;
-  if (!scan) return <PageLayout><div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>Scan not found.</div></PageLayout>;
+  if (!detail) return <PageLayout><div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>Activity not found.</div></PageLayout>;
 
   const expandAll = () => setExpanded(new Set(groups.keys()));
   const collapseAll = () => setExpanded(new Set());
@@ -235,27 +258,27 @@ export function ScanDetailPage() {
   const activeFilterCount = sevFilters.size + ruleFilters.size;
 
   const handleDelete = async () => {
-    if (!scanId || !confirm('Delete this scan? This cannot be undone.')) return;
+    if (!activityId || !confirm('Delete this activity record? This cannot be undone.')) return;
     try {
-      await deleteScan(scanId);
-      navigate('/scans');
+      await deleteActivity(activityId);
+      navigate('/activity');
     } catch {
-      alert('Failed to delete scan.');
+      alert('Failed to delete activity record.');
     }
   };
 
   return (
     <PageLayout>
       <PageHeader
-        title={scan.project_path}
+        title={detail.project_path}
         breadcrumbs={[
-          { label: 'Scans', to: '/scans' },
-          { label: scan.project_path },
+          { label: 'Activity', to: '/activity' },
+          { label: detail.project_path },
         ]}
-        description={`${scan.scan_type} scan via ${scan.source} — ${new Date(scan.created_at).toLocaleString()}`}
+        description={`${displayType(detail.scan_type)} via ${detail.source} — ${new Date(detail.created_at).toLocaleString()}`}
         headerActions={
           <Button variant="danger" onClick={handleDelete} size="sm">
-            Delete Scan
+            Delete
           </Button>
         }
       />
@@ -265,13 +288,20 @@ export function ScanDetailPage() {
         <Split hasGutter style={{ marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
           <SplitItem>
             <Label
-              color={scan.total_violations > 0 ? 'red' : 'green'}
+              color={detail.total_violations > 0 ? 'red' : 'green'}
               isCompact={false}
             >
-              {scan.total_violations > 0 ? `${scan.total_violations} VIOLATIONS` : 'CLEAN'}
+              {detail.total_violations > 0 ? `${detail.total_violations} VIOLATIONS` : 'CLEAN'}
             </Label>
           </SplitItem>
-          {scan.violations.length > 0 && SEVERITY_ORDER.map((cls) => {
+          {detail.fixable > 0 && (
+            <SplitItem>
+              <Label color="green" isCompact={false}>
+                {detail.fixable} FIXABLE
+              </Label>
+            </SplitItem>
+          )}
+          {detail.violations.length > 0 && SEVERITY_ORDER.map((cls) => {
             const count = sevCounts.get(cls) ?? 0;
             if (count === 0) return null;
             return (
@@ -287,19 +317,17 @@ export function ScanDetailPage() {
           <SplitItem isFilled />
           <SplitItem>
             <Split hasGutter>
-              {scan.scan_type === 'fix' && scan.fixed_count > 0 && (
-                <SplitItem>
-                  <strong style={{ color: 'var(--pf-t--global--color--status--success--default)' }}>{scan.fixed_count}</strong> Fixed
-                </SplitItem>
-              )}
               <SplitItem>
-                <strong style={{ color: 'var(--pf-t--global--color--status--success--default)' }}>{scan.auto_fixable}</strong> Auto-Fix
+                <strong style={{ color: 'var(--pf-t--global--color--status--success--default)' }}>{detail.fixable}</strong> Fixable
               </SplitItem>
               <SplitItem>
-                <strong style={{ color: 'var(--pf-t--global--color--status--warning--default)' }}>{scan.ai_candidate}</strong> AI
+                <strong style={{ color: 'var(--pf-t--global--color--status--info--default)' }}>{detail.remediated_count}</strong> Remediated
               </SplitItem>
               <SplitItem>
-                <strong style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>{scan.manual_review}</strong> Manual
+                <strong style={{ color: 'var(--pf-t--global--color--status--warning--default)' }}>{detail.ai_candidate}</strong> AI
+              </SplitItem>
+              <SplitItem>
+                <strong style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>{detail.manual_review}</strong> Manual
               </SplitItem>
             </Split>
           </SplitItem>
@@ -336,16 +364,16 @@ export function ScanDetailPage() {
               ))}
               <Button variant="link" onClick={clearFilters} size="sm">Clear all</Button>
               <span style={{ opacity: 0.7, fontSize: 13 }}>
-                {filtered.length} of {scan.violations.length}
+                {filtered.length} of {detail.violations.length}
               </span>
             </>
           )}
         </div>
 
         {/* Pipeline logs */}
-        {scan.logs.length > 0 && (
+        {detail.logs.length > 0 && (
           <ExpandableSection
-            toggleText={`Pipeline Log (${scan.logs.length})`}
+            toggleText={`Pipeline Log (${detail.logs.length})`}
             isExpanded={logsOpen}
             onToggle={(_e, expanded) => setLogsOpen(expanded)}
             style={{ marginBottom: 24 }}
@@ -355,7 +383,7 @@ export function ScanDetailPage() {
                 <tr role="row"><th role="columnheader">Phase</th><th role="columnheader">Message</th></tr>
               </thead>
               <tbody>
-                {scan.logs.map((lg) => (
+                {detail.logs.map((lg) => (
                   <tr key={lg.id} role="row">
                     <td role="cell"><Label isCompact>{lg.phase}</Label></td>
                     <td role="cell">{lg.message}</td>
@@ -381,52 +409,91 @@ export function ScanDetailPage() {
               No violations{hasFilters ? ' matching filters' : ' found'}.
             </div>
           ) : (
-            Array.from(groups.entries()).map(([file, violations]) => (
-              <div className="apme-file-group" key={file}>
-                <div className="apme-file-header" onClick={() => {
-                  setExpanded((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(file)) next.delete(file);
-                    else next.add(file);
-                    return next;
-                  });
-                }}>
-                  <span style={{ opacity: 0.5 }}>{expanded.has(file) ? '\u25BC' : '\u25B6'}</span>
-                  <span className="apme-file-name">{file}</span>
-                  <span className="apme-file-count">{violations.length} issues</span>
+            Array.from(groups.entries()).map(([file, violations]) => {
+              const fixable = violations.filter((v) => v.remediation_class === 1);
+              const nonFixable = violations
+                .filter((v) => v.remediation_class !== 1)
+                .sort((a, b) =>
+                  severityOrder(severityClass(a.level, a.rule_id)) - severityOrder(severityClass(b.level, b.rule_id)),
+                );
+              const hasDiff = patchByFile.has(file);
+              const isDiffOpen = diffExpanded.has(file);
+
+              return (
+                <div className="apme-file-group" key={file}>
+                  <div className="apme-file-header" onClick={() => {
+                    setExpanded((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(file)) next.delete(file);
+                      else next.add(file);
+                      return next;
+                    });
+                  }}>
+                    <span style={{ opacity: 0.5 }}>{expanded.has(file) ? '\u25BC' : '\u25B6'}</span>
+                    <span className="apme-file-name">{file}</span>
+                    <span className="apme-file-count">{violations.length} issues</span>
+                  </div>
+                  {expanded.has(file) && (
+                    <>
+                      {fixable.length > 0 && (
+                        <>
+                          <div className="apme-fixable-summary">
+                            <span className="apme-badge fixable" style={{ fontSize: 11 }}>Fixable</span>
+                            <span style={{ flex: 1, fontSize: 13 }}>
+                              {fixable.length} violation{fixable.length !== 1 ? 's' : ''} auto-fixable by Tier 1 transforms
+                            </span>
+                            {hasDiff && (
+                              <Button
+                                variant="link"
+                                size="sm"
+                                onClick={() => setDiffExpanded((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(file)) next.delete(file);
+                                  else next.add(file);
+                                  return next;
+                                })}
+                              >
+                                {isDiffOpen ? 'Hide Diff' : 'Show Diff'}
+                              </Button>
+                            )}
+                          </div>
+                          {isDiffOpen && hasDiff && (
+                            <div className="apme-diff-block">
+                              <pre>{patchByFile.get(file)}</pre>
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {nonFixable.map((v: ViolationDetail) => (
+                        <div className="apme-violation-item" key={v.id}>
+                          <span className={`apme-severity ${severityClass(v.level, v.rule_id)}`}>
+                            {severityLabel(v.level, v.rule_id)}
+                          </span>
+                          <span className="apme-rule-id" title={getRuleDescription(v.rule_id) || v.rule_id}>{v.rule_id}</span>
+                          <span className={tierBadgeClass(v.remediation_class)} style={{ fontSize: 10, visibility: v.remediation_class > 0 ? 'visible' : 'hidden' }}>
+                            {tierLabel(v.remediation_class) || '\u00A0'}
+                          </span>
+                          <span className="apme-line-number" style={{ visibility: v.line != null ? 'visible' : 'hidden' }}>
+                            {v.line != null ? `Line ${v.line}` : '\u00A0'}
+                          </span>
+                          <div className="apme-violation-message">
+                            {v.message}
+                            {v.path && <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontFamily: 'var(--pf-t--global--font--family--mono)' }}>{v.path}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                 </div>
-                {expanded.has(file) &&
-                  violations
-                    .sort((a: ViolationDetail, b: ViolationDetail) =>
-                      severityOrder(severityClass(a.level, a.rule_id)) - severityOrder(severityClass(b.level, b.rule_id)),
-                    )
-                    .map((v: ViolationDetail) => (
-                    <div className="apme-violation-item" key={v.id}>
-                      <span className={`apme-severity ${severityClass(v.level, v.rule_id)}`}>
-                        {severityLabel(v.level, v.rule_id)}
-                      </span>
-                      <span className="apme-rule-id" title={getRuleDescription(v.rule_id) || v.rule_id}>{v.rule_id}</span>
-                      <span className="apme-badge running" style={{ fontSize: 10, visibility: v.remediation_class > 0 ? 'visible' : 'hidden' }}>
-                        {tierLabel(v.remediation_class) || '\u00A0'}
-                      </span>
-                      <span className="apme-line-number" style={{ visibility: v.line != null ? 'visible' : 'hidden' }}>
-                        {v.line != null ? `Line ${v.line}` : '\u00A0'}
-                      </span>
-                      <div className="apme-violation-message">
-                        {v.message}
-                        {v.path && <span style={{ display: 'block', fontSize: 11, opacity: 0.5, fontFamily: 'var(--pf-t--global--font--family--mono)' }}>{v.path}</span>}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            ))
-          )}
+              );
+            }))
+          }
         </div>
 
         {/* AI proposals */}
-        {scan.proposals.length > 0 && (
+        {detail.proposals.length > 0 && (
           <div style={{ marginTop: 24 }}>
-            <h3 style={{ marginBottom: 12 }}>AI Proposals ({scan.proposals.length})</h3>
+            <h3 style={{ marginBottom: 12 }}>AI Proposals ({detail.proposals.length})</h3>
             <table className="pf-v6-c-table pf-m-compact" role="grid">
               <thead>
                 <tr role="row">
@@ -438,7 +505,7 @@ export function ScanDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {scan.proposals.map((p) => (
+                {detail.proposals.map((p) => (
                   <tr key={p.id} role="row">
                     <td role="cell"><span className="apme-rule-id">{p.rule_id}</span></td>
                     <td role="cell" style={{ fontSize: 13 }}>{p.file}</td>
@@ -457,12 +524,12 @@ export function ScanDetailPage() {
         )}
 
         {/* Diagnostics */}
-        {scan.diagnostics_json && (
+        {detail.diagnostics_json && (
           <ExpandableSection toggleText="Diagnostics (raw)" style={{ marginTop: 24 }}>
             <pre style={{ padding: 16, fontSize: 12, overflow: 'auto', maxHeight: 400, background: 'var(--pf-t--global--background--color--secondary--default)' }}>
               {(() => {
-                try { return JSON.stringify(JSON.parse(scan.diagnostics_json), null, 2); }
-                catch { return scan.diagnostics_json; }
+                try { return JSON.stringify(JSON.parse(detail.diagnostics_json), null, 2); }
+                catch { return detail.diagnostics_json; }
               })()}
             </pre>
           </ExpandableSection>

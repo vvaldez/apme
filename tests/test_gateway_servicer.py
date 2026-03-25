@@ -56,7 +56,7 @@ async def test_report_scan_completed_persists() -> None:
     async with get_session() as db:
         scan = await q.get_scan(db, "scan-1")
     assert scan is not None
-    assert scan.scan_type == "scan"
+    assert scan.scan_type == "check"
     assert scan.session_id == "sess-1"
 
 
@@ -126,7 +126,7 @@ async def test_report_scan_with_logs() -> None:
 
 
 async def test_report_fix_completed_persists() -> None:
-    """Fix event is persisted with type='fix'."""
+    """Remediate event is persisted with scan_type='remediate'."""
     servicer = ReportingServicer()
     proposal = reporting_pb2.ProposalOutcome(
         proposal_id="p1",
@@ -148,7 +148,7 @@ async def test_report_fix_completed_persists() -> None:
     async with get_session() as db:
         scan = await q.get_scan(db, "fix-1")
     assert scan is not None
-    assert scan.scan_type == "fix"
+    assert scan.scan_type == "remediate"
     assert len(scan.proposals) == 1
     assert scan.proposals[0].status == "approved"
 

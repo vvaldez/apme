@@ -1,5 +1,5 @@
 /**
- * Common types for scan/fix operations shared by both the Playground
+ * Common types for check/remediate operations shared by both the Playground
  * (useSessionStream) and Project (useProjectOperation) hooks.
  */
 
@@ -7,7 +7,8 @@ export type OperationStatus =
   | "idle"
   | "connecting"
   | "preparing"
-  | "scanning"
+  | "cloning"
+  | "checking"
   | "tier1_done"
   | "awaiting_approval"
   | "applying"
@@ -19,6 +20,7 @@ export interface OperationProgress {
   phase: string;
   message: string;
   timestamp: number;
+  progress?: number;
 }
 
 export interface OperationProposal {
@@ -29,14 +31,20 @@ export interface OperationProposal {
   confidence: number;
   explanation?: string;
   diff_hunk?: string;
+  status?: 'proposed' | 'declined';
+  suggestion?: string;
+  line_start?: number;
 }
 
 export interface OperationResult {
   total_violations: number;
-  auto_fixable: number;
+  fixable: number;
   ai_candidate: number;
+  ai_proposed: number;
+  ai_declined: number;
+  ai_accepted: number;
   manual_review: number;
-  fixed_count?: number;
+  remediated_count?: number;
 }
 
 export interface OperationState {

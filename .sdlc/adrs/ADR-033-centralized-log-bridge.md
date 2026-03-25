@@ -43,7 +43,7 @@ to carry logs back.
 
 The `FixSession` bidirectional stream (ADR-028) includes `ProgressUpdate`
 messages with `LogLevel`, `phase`, and `message` fields. The CLI's
-`fix.py` already filters these by level. However:
+`remediate` command already filters these by level. However:
 
 - `ProgressUpdate` messages are manually constructed, not driven by a
   logging system
@@ -156,7 +156,7 @@ alongside the pod. CLI queries the log aggregator.
 - Latency between log emission and availability
 
 **Why not chosen**: APME is a developer tool, not a long-running service.
-The logging solution must work with `apme-scan scan .` on a laptop.
+The logging solution must work with `apme-scan check .` on a laptop.
 
 ### Alternative 4: Custom log functions (not standard logging)
 
@@ -300,6 +300,10 @@ message FormatResponse {
   gap created by moving all logic server-side
 - ADR-028: Session-based fix workflow — FixSession's `ProgressUpdate`
   streaming is the model for the log bridge; this ADR generalizes it
+
+## Addendum
+
+> **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) and `ScanResponse` are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme-scan` binary name is unchanged.
 
 ## References
 

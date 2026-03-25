@@ -37,14 +37,14 @@ The design prioritizes:
   |  |          RemediationEngine                                |  |
   |  |                                                            |  |
   |  |  Phase 1: Tier 1 convergence loop                         |  |
-  |  |    scan -> partition -> transform -> re-scan               |  |
-  |  |    (existing, unchanged)                                   |  |
+  |  |    check (internal scan) -> partition -> transform ->     |  |
+  |  |    re-check (existing, unchanged)                         |  |
   |  |                                                            |  |
   |  |  Phase 2: Tier 2 AI escalation                            |  |
   |  |    for each remaining_ai violation:                       |  |
   |  |      build prompt                                         |  |
   |  |      -> AIProvider.propose_fix()                          |  |
-  |  |      -> re-validate (scan snippet)                        |  |
+  |  |      -> re-validate (check snippet / internal scan)        |  |
   |  |      -> hybrid cleanup (Tier 1 transforms)                |  |
   |  |      -> yield proposal to CLI                             |  |
   |  +----------------------------------------------------------+  |
@@ -211,14 +211,14 @@ The core innovation: every AI proposal is re-validated through APME's own valida
      +-- valid -> continue
 
   4. Re-validate
-     +-- run scan_fn() on the proposed YAML
+     +-- run validation (internal scan) on the proposed YAML
      +-- clean (0 new violations) -> present to user
      +-- new violations found -> step 5
 
   5. Hybrid cleanup
      +-- partition new violations via is_finding_resolvable()
      +-- Tier 1 fixable -> apply deterministic transforms
-     +-- re-scan after transforms
+     +-- re-check after transforms (internal re-scan)
      +-- clean -> present to user (note transforms applied)
      +-- still violations -> step 6
 
@@ -445,7 +445,7 @@ $ apme-scan health-check --include-ai
 ### Flags
 
 ```
-apme-scan fix [target] [options]
+apme-scan remediate [target] [options]
 
 AI Escalation:
   --ai                 Enable AI escalation for Tier 2 violations (opt-in)

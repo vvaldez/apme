@@ -82,7 +82,7 @@ async def _seed_project(
                     source="gateway",
                     trigger="ui",
                     created_at="2026-03-15T12:00:00Z",
-                    scan_type="scan",
+                    scan_type="check",
                     total_violations=scan_violations,
                 )
             )
@@ -241,13 +241,13 @@ async def test_delete_project_not_found(client: AsyncClient) -> None:
 
 
 async def test_project_scans(client: AsyncClient) -> None:
-    """GET /projects/{id}/scans returns scans for the project.
+    """GET /projects/{id}/activity returns activity for the project.
 
     Args:
         client: Async HTTPX test client.
     """
     await _seed_project(add_scan=True)
-    resp = await client.get("/api/v1/projects/proj-1/scans")
+    resp = await client.get("/api/v1/projects/proj-1/activity")
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 1
@@ -255,12 +255,12 @@ async def test_project_scans(client: AsyncClient) -> None:
 
 
 async def test_project_scans_not_found(client: AsyncClient) -> None:
-    """GET /projects/{id}/scans returns 404 for unknown project.
+    """GET /projects/{id}/activity returns 404 for unknown project.
 
     Args:
         client: Async HTTPX test client.
     """
-    resp = await client.get("/api/v1/projects/missing/scans")
+    resp = await client.get("/api/v1/projects/missing/activity")
     assert resp.status_code == 404
 
 

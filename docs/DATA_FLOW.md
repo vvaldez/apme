@@ -1,11 +1,11 @@
 # Data flow
 
-This document traces a scan request from CLI to violation output, covering every transformation and serialization boundary.
+This document traces a **check** run from the CLI to violation output, covering every transformation and serialization boundary. The engine still runs an internal scan pipeline (`run_scan`, `scan_id`, etc.); **check** is the user-facing name for that operation.
 
 ## Request lifecycle
 
 ```
-User runs:  apme-scan scan /path/to/project
+User runs:  apme-scan check /path/to/project
             │
             ▼
 ┌───────────────────────────────────────────────────────┐
@@ -18,14 +18,18 @@ User runs:  apme-scan scan /path/to/project
 │  3. Filter: TEXT_EXTENSIONS, skip SKIP_DIRS,          │
 │     skip SKIP_FILENAMES (.travis.yml), apply          │
 │     .apmeignore patterns, exclude >2 MiB/binary       │
-│  4. Build ScanRequest:                                │
-│     - scan_id (uuid)                                  │
-│     - session_id (from project root or --session)     │
-│     - project_root (basename)                         │
-│     - files[] = File(path=relative, content=bytes)    │
-│     - options (ansible_core_version, collection_specs)│
-│                                                       │
-│  gRPC call: Primary.Scan(ScanRequest) ───────────────────────┐
+│  4. Build a stream of ScanChunk messages (chunked FS):       │
+│     - scan_id (uuid) on first chunk                             │
+│     - session_id (from project root or --session)               │
+│     - project_root (basename)                                   │
+│     - files[] = File(path=relative, content=bytes) per chunk    │
+│     - ScanOptions on first chunk (ansible_core_version,         │
+│       collection_specs)                                         │
+│                                                                 │
+│  gRPC: Primary.FixSession(stream SessionCommand) — ADR-039      │
+│        Each SessionCommand carries upload=ScanChunk until       │
+│        last chunk; check mode (no FixOptions / remediate).      │
+│        ScanStream RPC removed; FixSession is the CLI stream.     │
 └───────────────────────────────────────────────────────┘       │
                                                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
@@ -113,7 +117,8 @@ User runs:  apme-scan scan /path/to/project
 │     - Each validator's ValidatorDiagnostics                      │
 │     - Fan-out wall-clock, total wall-clock                       │
 │                                                                  │
-│  Return: ScanResponse(violations, scan_id, diagnostics)          │
+│  Stream SessionEvent (progress, …); result event carries         │
+│  violations + diagnostics (same merge/dedup as unary Scan).      │
 └──────────────────────────────────────────────────────────────────┘
                          │
                          ▼
@@ -216,7 +221,7 @@ Serializes the tree into a flat JSON structure consumable by OPA and other paylo
 
 ### CLI → Primary (gRPC)
 
-Files are sent as protobuf `File` messages (path + content bytes). This is the "chunked filesystem" pattern — the CLI reads all text files from the project and sends them over the wire so the Primary doesn't need filesystem access.
+Files are sent as protobuf `File` messages (path + content bytes) inside streamed **`ScanChunk`** payloads on **`FixSession`** (check and remediate). This is the "chunked filesystem" pattern — the CLI reads all text files from the project and sends them over the wire so the Primary doesn't need filesystem access. **`ScanStream`** was removed (ADR-039); **`FixSession`** is the single streaming RPC for those flows.
 
 ### Primary → Validators (gRPC)
 
@@ -273,10 +278,10 @@ The `rule_id` prefix convention:
 
 ## Event reporting (Primary → Gateway → UI)
 
-After every scan or fix, the Primary pushes a `ScanCompletedEvent` or `FixCompletedEvent` to the Gateway's gRPC Reporting service (if `APME_REPORTING_ENDPOINT` is configured). The Gateway persists the event to SQLite and the UI reads it via the REST API.
+After every **check** or **remediate** run, the Primary pushes a `ScanCompletedEvent` or `FixCompletedEvent` to the Gateway's gRPC Reporting service (if `APME_REPORTING_ENDPOINT` is configured). The Gateway persists the event to SQLite and the UI reads it via the REST API.
 
 ```
-Primary (scan completes)
+Primary (check completes)
     │
     │  await emit_scan_completed(ScanCompletedEvent)
     │    ↓
@@ -287,15 +292,15 @@ Primary (scan completes)
     ▼
 Gateway (grpc_reporting/servicer.py)
     │  Upsert session row
-    │  Insert scan + violations + logs → SQLite
+    │  Insert activity row + violations + logs → SQLite
     │
     ▼
 UI (React SPA on :8081)
-    │  GET /api/v1/scans (nginx proxies to Gateway :8080)
-    │  Renders scan history, violations, session trends
+    │  GET /api/v1/activity (nginx proxies to Gateway :8080)
+    │  Renders activity history, violations, session trends
 ```
 
-Event emission uses ``await`` so delivery completes before the scan response is returned.  When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the scan path.
+Event emission uses ``await`` so delivery completes before the operation returns to the client. When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the check/remediate path.
 
 ## Local daemon mode
 

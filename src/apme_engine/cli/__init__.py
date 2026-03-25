@@ -28,18 +28,18 @@ def main() -> None:
         run_daemon(args)
         return
 
-    if cmd == "scan":
-        from apme_engine.cli.scan import run_scan
+    if cmd == "check":
+        from apme_engine.cli.check import run_check
 
-        run_scan(args)
+        run_check(args)
     elif cmd == "format":
         from apme_engine.cli.format_cmd import run_format
 
         run_format(args)
-    elif cmd == "fix":
-        from apme_engine.cli.fix import run_fix
+    elif cmd == "remediate":
+        from apme_engine.cli.remediate import run_remediate
 
-        run_fix(args)
+        run_remediate(args)
     elif cmd == "health-check":
         from apme_engine.cli.health import run_health_check
 

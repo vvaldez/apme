@@ -58,7 +58,7 @@ def _run_scan(fixture_dir: Path) -> YAMLDict:
             sys.executable,
             "-m",
             "apme_engine.cli",
-            "scan",
+            "check",
             "--json",
             "--session",
             _SESSION_ID,
@@ -90,7 +90,7 @@ def _wait_for_api(http_url: str, scan_id: str, timeout: float = 15.0) -> dict[st
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            url = f"{http_url}/api/v1/scans/{scan_id}"
+            url = f"{http_url}/api/v1/activity/{scan_id}"
             with urllib.request.urlopen(url, timeout=3) as resp:
                 if resp.status == 200:
                     return cast(dict[str, object], json.loads(resp.read()))

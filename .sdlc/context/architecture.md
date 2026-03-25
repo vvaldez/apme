@@ -36,7 +36,7 @@ APME is a six-container gRPC microservice deployed as a single Podman pod. The P
      ┌──────────┐
      │   CLI    │  podman run --rm --pod apme-pod
      │ (on-the  │  -v $(pwd):/workspace:ro,Z
-     │  -fly)   │  apme-cli:latest apme-scan scan .
+     │  -fly)   │  apme-cli:latest apme-scan check .
      └──────────┘
 ```
 
@@ -50,7 +50,7 @@ APME is a six-container gRPC microservice deployed as a single Podman pod. The P
 | **Ansible** | apme-ansible | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
 | **Gitleaks** | apme-gitleaks | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
 | **Galaxy Proxy** | apme-galaxy-proxy | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
-| **CLI** | apme-cli | — | Ephemeral. Reads project files, builds chunked `ScanRequest`, calls `Primary.Scan`, prints violations. Run with `--pod apme-pod` and CWD mounted |
+| **CLI** | apme-cli | — | Ephemeral. Reads project files, chunks uploads, drives **`FixSession`** for user **check** and **remediate** (ADR-039). Unary `Primary.Scan`/`ScanRequest`/`ScanResponse` remain for engine-aligned clients. Run with `--pod apme-pod` and CWD mounted |
 
 ---
 
@@ -64,11 +64,16 @@ Proto definitions live in `proto/apme/v1/`. Generated Python stubs in `src/apme/
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
   rpc Format(FormatRequest) returns (FormatResponse);
+  rpc FormatStream(stream ScanChunk) returns (FormatResponse);
+  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
   rpc Health(HealthRequest) returns (HealthResponse);
+  rpc ListAIModels(ListAIModelsRequest) returns (ListAIModelsResponse);
 }
 ```
 
-The CLI sends a `ScanRequest` containing the project files as a chunked filesystem (`repeated File`), an optional `ScanOptions` (ansible-core version, collection specs), and a `scan_id`. Primary returns `ScanResponse` with merged violations and `ScanDiagnostics` (engine + validator timing data).
+**`ScanStream` removed (ADR-039).** User-facing **check** and **remediate** both use **`FixSession`**: without `fix_options` on the first chunk the engine runs check (format → convergence in dry-run); with `FixOptions` it runs full remediation (Tier 1 apply, optional AI, approvals). The unary **`Scan`** RPC and **`ScanRequest` / `ScanResponse` / `scan_id`** remain for engine semantics and compatible clients.
+
+For unary `Scan`, the CLI (or another client) sends a `ScanRequest` with project files as `repeated File`, optional `ScanOptions`, and `scan_id`. Primary returns `ScanResponse` with merged violations and `ScanDiagnostics` (engine + validator timing data).
 
 ### Validator (`validate.proto`) — Unified Contract
 
@@ -353,3 +358,4 @@ See [ADR Index](/.sdlc/adrs/README.md) for the full Architecture Decision Record
 - [ADR-007: Async gRPC Servers](/.sdlc/adrs/ADR-007-async-grpc-servers.md)
 - [ADR-012: Scale Pods Not Services](/.sdlc/adrs/ADR-012-scale-pods-not-services.md)
 - [ADR-013: Structured Diagnostics](/.sdlc/adrs/ADR-013-structured-diagnostics.md)
+- [ADR-039: Unified Operation Stream](/.sdlc/adrs/ADR-039-unified-operation-stream.md) — `FixSession` for check and remediate; `ScanStream` removed

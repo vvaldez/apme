@@ -67,7 +67,7 @@ async def _seed(
                 project_path="/proj",
                 source="cli",
                 created_at="2026-01-01T00:00:00Z",
-                scan_type="scan",
+                scan_type="check",
                 total_violations=1 if add_violation else 0,
             )
         )
@@ -174,7 +174,7 @@ async def test_list_scans(client: AsyncClient) -> None:
         client: Async HTTP test client.
     """
     await _seed()
-    resp = await client.get("/api/v1/scans")
+    resp = await client.get("/api/v1/activity")
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 1
@@ -188,7 +188,7 @@ async def test_list_scans_filter_session(client: AsyncClient) -> None:
     """
     await _seed(session_id="s1", scan_id="sc1")
     await _seed(session_id="s2", scan_id="sc2")
-    resp = await client.get("/api/v1/scans", params={"session_id": "s1"})
+    resp = await client.get("/api/v1/activity", params={"session_id": "s1"})
     body = resp.json()
     assert body["total"] == 1
     assert body["items"][0]["scan_id"] == "sc1"
@@ -201,7 +201,7 @@ async def test_get_scan_detail_with_children(client: AsyncClient) -> None:
         client: Async HTTP test client.
     """
     await _seed(add_violation=True, add_proposal=True, add_log=True)
-    resp = await client.get("/api/v1/scans/scan-1")
+    resp = await client.get("/api/v1/activity/scan-1")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["violations"]) == 1
@@ -217,7 +217,7 @@ async def test_get_scan_not_found(client: AsyncClient) -> None:
     Args:
         client: Async HTTP test client.
     """
-    resp = await client.get("/api/v1/scans/missing")
+    resp = await client.get("/api/v1/activity/missing")
     assert resp.status_code == 404
 
 
@@ -228,9 +228,9 @@ async def test_delete_scan(client: AsyncClient) -> None:
         client: Async HTTP test client.
     """
     await _seed()
-    resp = await client.delete("/api/v1/scans/scan-1")
+    resp = await client.delete("/api/v1/activity/scan-1")
     assert resp.status_code == 204
-    resp = await client.get("/api/v1/scans/scan-1")
+    resp = await client.get("/api/v1/activity/scan-1")
     assert resp.status_code == 404
 
 
@@ -240,7 +240,7 @@ async def test_delete_scan_not_found(client: AsyncClient) -> None:
     Args:
         client: Async HTTP test client.
     """
-    resp = await client.delete("/api/v1/scans/missing")
+    resp = await client.delete("/api/v1/activity/missing")
     assert resp.status_code == 404
 
 
@@ -259,7 +259,7 @@ async def test_top_violations(client: AsyncClient) -> None:
                 project_path="/proj",
                 source="cli",
                 created_at="2026-01-02T00:00:00Z",
-                scan_type="scan",
+                scan_type="check",
                 total_violations=1,
             )
         )
@@ -297,13 +297,13 @@ async def test_session_trend_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_fix_rates(client: AsyncClient) -> None:
-    """GET /stats/fix-rates returns fix rate entries.
+async def test_remediation_rates(client: AsyncClient) -> None:
+    """GET /stats/remediation-rates returns remediation rate entries.
 
     Args:
         client: Async HTTP test client.
     """
-    resp = await client.get("/api/v1/stats/fix-rates")
+    resp = await client.get("/api/v1/stats/remediation-rates")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
 

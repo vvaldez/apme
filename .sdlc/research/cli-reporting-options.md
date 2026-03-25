@@ -141,7 +141,7 @@ HTML_TEMPLATE = """
 | Criterion | Score | Notes |
 |-----------|-------|-------|
 | Zero-config | 4/5 | Jinja2 likely needed |
-| CLI integration | 5/5 | `apme scan --html report.html` |
+| CLI integration | 5/5 | `apme-scan check --html report.html` |
 | Lightweight | 5/5 | Just templates |
 | No auth | 5/5 | Local file |
 | Simple deployment | 5/5 | Opens in any browser |
@@ -168,8 +168,8 @@ HTML_TEMPLATE = """
 
 **Implementation**:
 ```bash
-apme scan . --json | jq '.issues[] | select(.severity == "error")'
-apme scan . --json > results.json && open results.json  # macOS JSON viewer
+apme-scan check . --json | jq '.issues[] | select(.severity == "error")'
+apme-scan check . --json > results.json && open results.json  # macOS JSON viewer
 ```
 
 **Evaluation**:
@@ -261,10 +261,10 @@ console.save_html("report.html")
 ### Implementation Plan
 
 ```
-apme scan .                    # Rich terminal output (default)
-apme scan . --json             # JSON for automation
-apme scan . --junit            # JUnit XML for CI
-apme scan . --html report.html # Rich HTML export
+apme-scan check .                    # Rich terminal output (default)
+apme-scan check . --json             # JSON for automation
+apme-scan check . --junit            # JUnit XML for CI
+apme-scan check . --html report.html # Rich HTML export
 ```
 
 ### Future Enhancements (if needed)
@@ -321,7 +321,7 @@ uv run python prototypes/cli-reporting/output_formatter.py
 ### CLI Flags
 
 ```
-apme scan [OPTIONS] [PATH]
+apme-scan check [OPTIONS] [PATH]
 
 Options:
   -f, --format [rich|json|junit|html]  Output format [default: rich]
@@ -336,9 +336,9 @@ Options:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ CLI (Typer)                                                     │
-│   ├── scan command receives flags                               │
-│   ├── Calls Primary.Scan() via gRPC                            │
-│   ├── Receives ScanResponse with violations                    │
+│   ├── check command receives flags                              │
+│   ├── Calls Primary (check / FixSession) via gRPC               │
+│   ├── Receives ScanResponse with violations                     │
 │   └── Calls format_output(result, format, output)              │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -358,13 +358,13 @@ Options:
 
 ### Rich Terminal (default)
 ```
-apme scan .
+apme-scan check .
 ```
 ![Rich terminal output with tables, panels, and tree view]
 
 ### JSON
 ```
-apme scan . --json
+apme-scan check . --json
 ```
 ```json
 {
@@ -377,7 +377,7 @@ apme scan . --json
 
 ### JUnit XML
 ```
-apme scan . --junit results.xml
+apme-scan check . --junit results.xml
 ```
 ```xml
 <?xml version='1.0' encoding='utf-8'?>
@@ -392,7 +392,7 @@ apme scan . --junit results.xml
 
 ### HTML Report
 ```
-apme scan . --html report.html
+apme-scan check . --html report.html
 ```
 Generates a standalone HTML file viewable in any browser with the same rich formatting as the terminal.
 

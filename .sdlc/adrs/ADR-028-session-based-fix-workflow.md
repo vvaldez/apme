@@ -182,7 +182,7 @@ was applied. Only Tier 2+ proposals require client approval.
 
 ### --check short-circuit
 
-`fix --check` short-circuits after Tier 1 summary — skips AI entirely. Exits
+`remediate --check` (CLI: `apme-scan remediate --check`) short-circuits after Tier 1 summary — skips AI entirely. Exits
 with code 1 if changes are needed (CI gate). Runs the same session pipeline
 but sends `Close` immediately after `Tier1Summary`.
 
@@ -267,7 +267,7 @@ for progress events.
 
 - Engine (scan, remediate, format) stays fully stateless — only the session
   coordinator is stateful
-- `ScanStream`, `FormatStream`, `Health`, cache RPCs are unaffected
+- `FormatStream`, `Health`, cache RPCs are unaffected. **`ScanStream` was removed** (ADR-039); check and remediate both use `FixSession` with appropriate session options.
 - `RemediationEngine`, `TransformRegistry`, `AIProvider` are unchanged
 - Session state is ephemeral (minutes, not hours) and disposable
 
@@ -342,6 +342,10 @@ async for event in stub.FixSession(command_iter()):
 - ADR-025: AIProvider Protocol (Tier 2 AI integration)
 - ADR-027: Agentic Project-Level AI Remediation (Tier 3, sandbox)
 
+## Addendum
+
+> **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme-scan` binary name is unchanged.
+
 ## References
 
 - gRPC Bidirectional Streaming: https://grpc.io/docs/what-is-grpc/core-concepts/#bidirectional-streaming-rpc
@@ -356,3 +360,4 @@ async for event in stub.FixSession(command_iter()):
 |------|--------|--------|
 | 2026-03-19 | AI Agent | Initial proposal |
 | 2026-03-19 | AI Agent | Accepted: implemented in PR #43. SessionStore, FixSession handler, CLI event loop, and 41 tests in test_session.py. |
+| 2026-03-25 | APME Team | ADR-039 addendum; Neutral section: `ScanStream` removed, `FixSession` for check and remediate; `remediate --check` wording. |

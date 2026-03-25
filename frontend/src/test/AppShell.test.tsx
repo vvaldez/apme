@@ -46,7 +46,7 @@ describe('App Shell', () => {
   it('renders sidebar navigation items', () => {
     renderApp();
 
-    for (const label of ['Dashboard', 'Projects', 'Playground', 'Scans', 'Health', 'Settings']) {
+    for (const label of ['Dashboard', 'Projects', 'Playground', 'Activity', 'Health', 'Settings']) {
       const items = screen.getAllByText(label);
       expect(items.length).toBeGreaterThanOrEqual(1);
     }

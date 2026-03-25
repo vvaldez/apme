@@ -42,13 +42,13 @@ This document defines the primary users of APME and their needs.
 
 **Goals**:
 - Get line-by-line remediation guidance
-- Auto-fix simple issues
+- Apply simple remediations automatically
 - Understand why changes are needed
 
 **Example Use Cases**:
 ```
-"Scan my playbook for AAP 2.5 compatibility"
-"Auto-fix all FQCN issues in this repository"
+"Check my playbook for AAP 2.5 compatibility"
+"Remediate all FQCN issues in this repository"
 "Show me what will break when we upgrade to Ansible 2.16"
 ```
 
@@ -60,4 +60,4 @@ When creating test cases for features, include scenarios for each persona:
 |---------|------------|
 | Product Manager | Dashboard, metrics, reports |
 | Automation Architect | Policy creation, bulk analysis |
-| DevOps Engineer | CLI, single-file scanning, auto-fix |
+| DevOps Engineer | CLI, single-file checks, remediation |

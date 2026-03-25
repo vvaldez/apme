@@ -305,7 +305,7 @@
 
 ## Fixer Summary
 
-Deterministic fixers (Tier 1) are auto-applied by `apme-scan fix --apply`.
+Deterministic fixers (Tier 1) are auto-applied by `apme-scan remediate --apply`.
 Rules without fixers fall to Tier 2 (AI-proposable) or Tier 3 (manual review).
 
 | Rule ID | Transform |

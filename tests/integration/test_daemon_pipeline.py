@@ -47,7 +47,7 @@ def _scan_json(fixture_dir: Path) -> YAMLDict:
             sys.executable,
             "-m",
             "apme_engine.cli",
-            "scan",
+            "check",
             "--json",
             "--session",
             _SESSION_ID,
@@ -94,7 +94,7 @@ def _scan_verbose(fixture_dir: Path) -> subprocess.CompletedProcess[str]:
             sys.executable,
             "-m",
             "apme_engine.cli",
-            "scan",
+            "check",
             "-v",
             "--session",
             _SESSION_ID,
@@ -125,36 +125,36 @@ def scan_verbose(infrastructure: object) -> subprocess.CompletedProcess[str]:
 def test_milestone_logs_displayed(scan_verbose: subprocess.CompletedProcess[str]) -> None:
     """With -v the CLI renders pipeline milestone logs on stderr in real time.
 
-    ScanStream is bidirectional: the server streams ``ScanEvent(progress=...)``
-    as milestones are reached, and the CLI renders them to stderr immediately.
-    The final ``ScanEvent(result=...)`` carries the full ``ScanResponse``.
+    The check command uses FixSession (ADR-038) which streams
+    ``SessionEvent(progress=...)`` as milestones are reached.
     This test verifies that key milestones are visible to the user.
 
     Args:
         scan_verbose: Completed scan process with -v output.
     """
     assert scan_verbose.returncode == 0, (
-        f"Scan exited {scan_verbose.returncode}:\n"
+        f"Check exited {scan_verbose.returncode}:\n"
         f"stdout: {scan_verbose.stdout[:2000]}\n"
         f"stderr: {scan_verbose.stderr[:2000]}"
     )
 
     stderr = scan_verbose.stderr
 
-    assert "[primary]" in stderr, f"Expected [primary] phase in stderr:\n{stderr[:2000]}"
-    assert "start" in stderr and ("Scan: start" in stderr or "ScanStream: start" in stderr), (
-        f"Expected 'Scan: start' or 'ScanStream: start' milestone in stderr:\n{stderr[:2000]}"
+    has_format_phase = "[format]" in stderr or "Formatting" in stderr
+    has_tier1_phase = "[tier1]" in stderr or "Tier 1" in stderr
+    has_pipeline = "Fan-out:" in stderr or "Venv: ready" in stderr
+    assert has_format_phase or has_tier1_phase or has_pipeline, (
+        f"Expected format/tier1/pipeline milestones in stderr:\n{stderr[:2000]}"
     )
-    assert "Scan: pipeline done" in stderr, f"Expected 'Scan: pipeline done' milestone in stderr:\n{stderr[:2000]}"
     assert "Fan-out:" in stderr, f"Expected 'Fan-out:' milestone in stderr:\n{stderr[:2000]}"
     assert "Venv: ready" in stderr, f"Expected 'Venv: ready' milestone in stderr:\n{stderr[:2000]}"
 
     assert "[native]" in stderr, f"Expected [native] phase in stderr:\n{stderr[:2000]}"
     assert "Native: validate" in stderr, f"Expected Native validate milestone in stderr:\n{stderr[:2000]}"
 
-    # stdout should have the human-readable scan results table, not JSON
-    assert "Scan Results" in scan_verbose.stdout, (
-        f"Expected 'Scan Results' in stdout (human-readable mode):\n{scan_verbose.stdout[:2000]}"
+    # stdout should have the human-readable check results table, not JSON
+    assert "Check Results" in scan_verbose.stdout, (
+        f"Expected 'Check Results' in stdout (human-readable mode):\n{scan_verbose.stdout[:2000]}"
     )
     assert scan_verbose.stdout.strip()[0] != "{", "stdout should not be JSON in non-JSON mode"
 
@@ -249,7 +249,7 @@ def _poll_api(url: str, *, timeout: float = 10.0) -> dict[str, object]:
 def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) -> None:
     """Cross-reference CLI scan output with gateway DB and REST API (ADR-020).
 
-    The engine emits a ScanCompletedEvent after every scan.  This test
+    The engine emits a FixCompletedEvent after ``check`` (FixSession).  This test
     proves the full pipeline by matching the scan the CLI received against
     what the gateway persisted to SQLite and exposes via REST:
 
@@ -259,7 +259,7 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
     3. Every rule_id the CLI reported also appears in the DB violations table.
     4. A session row was upserted with a non-empty project_path.
     5. Pipeline log entries were persisted for historical debugging.
-    6. REST /scans/{id} returns matching scan_type, violation counts,
+    6. REST /activity/{id} returns matching scan_type, violation counts,
        remediation breakdown, violation rule_ids, and pipeline logs.
     7. REST /sessions lists the session linked to our scan.
     8. REST /violations/top includes rules from the terrible-playbook
@@ -291,7 +291,9 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
     )
 
     db_scan_id, db_session_id, db_scan_type, db_total, db_auto, db_ai, db_manual = scans[0]
-    assert db_scan_type == "scan", f"Expected scan_type='scan', got {db_scan_type!r}"
+    assert db_scan_type == "remediate", (
+        f"Expected scan_type='remediate' (FixSession check path), got {db_scan_type!r}"
+    )
     assert int(str(db_total)) > 0, "Scan should have found violations in terrible-playbook"
 
     # -- 2. Remediation summary matches CLI output ----------------------
@@ -350,18 +352,18 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
     log_phases = {str(row[1]) for row in logs}
     assert "primary" in log_phases, f"Expected 'primary' phase in persisted logs, got phases: {sorted(log_phases)}"
 
-    # -- 6. REST /scans/{id} returns full detail matching CLI output ------
-    scan_detail = _poll_api(f"{http_url}/api/v1/scans/{cli_scan_id}")
-    assert scan_detail, f"GET /scans/{cli_scan_id} returned empty response"
+    # -- 6. REST /activity/{id} returns full detail matching CLI output ------
+    scan_detail = _poll_api(f"{http_url}/api/v1/activity/{cli_scan_id}")
+    assert scan_detail, f"GET /activity/{cli_scan_id} returned empty response"
     assert scan_detail.get("scan_id") == cli_scan_id, (
         f"REST scan_id mismatch: {scan_detail.get('scan_id')!r} != {cli_scan_id!r}"
     )
-    assert scan_detail.get("scan_type") == "scan"
+    assert scan_detail.get("scan_type") == "remediate"
     assert scan_detail.get("total_violations") == int(str(db_total)), (
         f"REST total_violations={scan_detail.get('total_violations')} != DB {db_total}"
     )
-    assert scan_detail.get("auto_fixable") == cli_summary.get("auto_fixable", 0), (
-        f"REST auto_fixable={scan_detail.get('auto_fixable')} != CLI {cli_summary.get('auto_fixable')}"
+    assert scan_detail.get("fixable") == cli_summary.get("auto_fixable", 0), (
+        f"REST fixable={scan_detail.get('fixable')} != CLI {cli_summary.get('auto_fixable')}"
     )
     assert scan_detail.get("ai_candidate") == cli_summary.get("ai_candidate", 0), (
         f"REST ai_candidate={scan_detail.get('ai_candidate')} != CLI {cli_summary.get('ai_candidate')}"
@@ -372,7 +374,7 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
 
     rest_violations = scan_detail.get("violations", [])
     assert isinstance(rest_violations, list) and len(rest_violations) > 0, (
-        "REST /scans/{id} should include violations list"
+        "REST /activity/{id} should include violations list"
     )
     rest_rule_ids = {str(v.get("rule_id", "")) for v in rest_violations}
     missing_rest = cli_rule_ids - rest_rule_ids
@@ -383,7 +385,9 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
     )
 
     rest_logs = scan_detail.get("logs", [])
-    assert isinstance(rest_logs, list) and len(rest_logs) > 0, "REST /scans/{id} should include pipeline logs"
+    assert isinstance(rest_logs, list) and len(rest_logs) > 0, (
+        "REST /activity/{id} should include pipeline logs"
+    )
     rest_log_phases = {str(lg.get("phase", "")) for lg in rest_logs}
     assert "primary" in rest_log_phases, f"REST logs missing 'primary' phase, got: {sorted(rest_log_phases)}"
 

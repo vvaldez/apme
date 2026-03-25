@@ -44,11 +44,6 @@ class PrimaryStub(object):
                 request_serializer=apme_dot_v1_dot_primary__pb2.ScanRequest.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_primary__pb2.ScanResponse.FromString,
                 _registered_method=True)
-        self.ScanStream = channel.stream_stream(
-                '/apme.v1.Primary/ScanStream',
-                request_serializer=apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
-                response_deserializer=apme_dot_v1_dot_primary__pb2.ScanEvent.FromString,
-                _registered_method=True)
         self.Format = channel.unary_unary(
                 '/apme.v1.Primary/Format',
                 request_serializer=apme_dot_v1_dot_primary__pb2.FormatRequest.SerializeToString,
@@ -89,12 +84,6 @@ class PrimaryServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ScanStream(self, request_iterator, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def Format(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -114,9 +103,9 @@ class PrimaryServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def FixSession(self, request_iterator, context):
-        """Session-based fix workflow (ADR-028). Bidirectional stream: client sends
-        file chunks then approval commands; server streams progress, proposals,
-        and results. Replaces the former one-shot FixStream RPC.
+        """Unified operation stream (ADR-028, ADR-038). Without fix_options = check mode.
+        With fix_options = remediate mode. Bidirectional stream: client sends file
+        chunks then approval commands; server streams progress, proposals, and results.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -136,11 +125,6 @@ def add_PrimaryServicer_to_server(servicer, server):
                     servicer.Scan,
                     request_deserializer=apme_dot_v1_dot_primary__pb2.ScanRequest.FromString,
                     response_serializer=apme_dot_v1_dot_primary__pb2.ScanResponse.SerializeToString,
-            ),
-            'ScanStream': grpc.stream_stream_rpc_method_handler(
-                    servicer.ScanStream,
-                    request_deserializer=apme_dot_v1_dot_primary__pb2.ScanChunk.FromString,
-                    response_serializer=apme_dot_v1_dot_primary__pb2.ScanEvent.SerializeToString,
             ),
             'Format': grpc.unary_unary_rpc_method_handler(
                     servicer.Format,
@@ -199,33 +183,6 @@ class Primary(object):
             '/apme.v1.Primary/Scan',
             apme_dot_v1_dot_primary__pb2.ScanRequest.SerializeToString,
             apme_dot_v1_dot_primary__pb2.ScanResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ScanStream(request_iterator,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.stream_stream(
-            request_iterator,
-            target,
-            '/apme.v1.Primary/ScanStream',
-            apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
-            apme_dot_v1_dot_primary__pb2.ScanEvent.FromString,
             options,
             channel_credentials,
             insecure,

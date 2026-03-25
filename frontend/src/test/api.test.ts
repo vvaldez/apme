@@ -29,38 +29,38 @@ describe("api service", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/health", expect.objectContaining({ headers: { Accept: "application/json" } }));
   });
 
-  it("listScans calls /api/v1/scans with pagination", async () => {
+  it("listActivity calls /api/v1/activity with pagination", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ total: 0, limit: 10, offset: 0, items: [] }));
-    const { listScans } = await import("../services/api");
-    await listScans(10, 5);
-    expect(mockFetch).toHaveBeenCalledWith("/api/v1/scans?limit=10&offset=5", expect.anything());
+    const { listActivity } = await import("../services/api");
+    await listActivity(10, 5);
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity?limit=10&offset=5", expect.anything());
   });
 
-  it("listScans appends session_id filter", async () => {
+  it("listActivity appends session_id filter", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ total: 0, limit: 10, offset: 0, items: [] }));
-    const { listScans } = await import("../services/api");
-    await listScans(10, 0, "abc123");
-    expect(mockFetch).toHaveBeenCalledWith("/api/v1/scans?limit=10&offset=0&session_id=abc123", expect.anything());
+    const { listActivity } = await import("../services/api");
+    await listActivity(10, 0, "abc123");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity?limit=10&offset=0&session_id=abc123", expect.anything());
   });
 
-  it("getScan calls correct path", async () => {
+  it("getActivity calls correct path", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ scan_id: "s1" }));
-    const { getScan } = await import("../services/api");
-    await getScan("s1");
-    expect(mockFetch).toHaveBeenCalledWith("/api/v1/scans/s1", expect.anything());
+    const { getActivity } = await import("../services/api");
+    await getActivity("s1");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity/s1", expect.anything());
   });
 
-  it("deleteScan calls DELETE", async () => {
+  it("deleteActivity calls DELETE", async () => {
     mockFetch.mockReturnValueOnce(Promise.resolve({ ok: true, status: 204 }));
-    const { deleteScan } = await import("../services/api");
-    await deleteScan("s1");
-    expect(mockFetch).toHaveBeenCalledWith("/api/v1/scans/s1", { method: "DELETE" });
+    const { deleteActivity } = await import("../services/api");
+    await deleteActivity("s1");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity/s1", { method: "DELETE" });
   });
 
-  it("deleteScan throws on failure", async () => {
+  it("deleteActivity throws on failure", async () => {
     mockFetch.mockReturnValueOnce(Promise.resolve({ ok: false, status: 404 }));
-    const { deleteScan } = await import("../services/api");
-    await expect(deleteScan("s1")).rejects.toThrow("404");
+    const { deleteActivity } = await import("../services/api");
+    await expect(deleteActivity("s1")).rejects.toThrow("404");
   });
 
   it("getSession calls correct path", async () => {

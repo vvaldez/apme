@@ -111,14 +111,13 @@ from pathlib import Path
 app = typer.Typer()
 
 @app.command()
-def scan(
+def check(
     path: Path = typer.Argument(..., help="Playbook path"),
-    fix: bool = typer.Option(False, "--fix", "-f"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
-    """Scan a playbook for AAP compatibility issues."""
+    """Check a playbook for AAP compatibility issues."""
     if verbose:
-        typer.echo(f"Scanning {path}...")
+        typer.echo(f"Checking {path}...")
     # ... implementation
 
 @app.command()
@@ -158,10 +157,10 @@ severity = st.sidebar.selectbox("Severity", ["All", "Error", "Warning", "Info"])
 
 # Load and display data
 @st.cache_data
-def load_scan_results(path: str) -> pd.DataFrame:
+def load_check_results(path: str) -> pd.DataFrame:
     return pd.read_json(path)
 
-df = load_scan_results("scan-results.json")
+df = load_check_results("check-results.json")
 
 # Filter
 if severity != "All":

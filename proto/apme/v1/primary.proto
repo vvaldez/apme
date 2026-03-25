@@ -11,14 +11,13 @@ import "google/protobuf/struct.proto";
 // to know the internal service topology.
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
-  rpc ScanStream(stream ScanChunk) returns (stream ScanEvent);
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
 
-  // Session-based fix workflow (ADR-028). Bidirectional stream: client sends
-  // file chunks then approval commands; server streams progress, proposals,
-  // and results. Replaces the former one-shot FixStream RPC.
+  // Unified operation stream (ADR-028, ADR-038). Without fix_options = check mode.
+  // With fix_options = remediate mode. Bidirectional stream: client sends file
+  // chunks then approval commands; server streams progress, proposals, and results.
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
 
   // List AI models available from the configured Abbenay daemon.
@@ -29,7 +28,7 @@ service Primary {
 // Shared messages (used by Scan, Format, and FixSession)
 // ---------------------------------------------------------------------------
 
-// ScanChunk is one batch of files for streaming RPCs (ScanStream, FormatStream,
+// ScanChunk is one batch of files for streaming RPCs (FormatStream,
 // FixSession upload phase). Send metadata on the first chunk; then one or more
 // chunks with files; set last=true on the final chunk.
 message ScanChunk {
@@ -77,16 +76,6 @@ message ScanResponse {
   repeated ProgressUpdate logs = 7;  // collected pipeline logs (ADR-033)
 }
 
-// Server -> Client events streamed during ScanStream. Progress updates are
-// delivered in real time as milestones are reached; the final event carries
-// the full ScanResponse.
-message ScanEvent {
-  oneof event {
-    ProgressUpdate progress = 1;
-    ScanResponse result = 2;
-  }
-}
-
 message ScanDiagnostics {
   double engine_parse_ms = 1;
   double engine_annotate_ms = 2;
@@ -130,6 +119,7 @@ message FixReport {
   int32 remaining_manual = 4;
   bool oscillation_detected = 5;
   repeated Violation remaining_violations = 6;
+  repeated Violation fixed_violations = 7;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +191,8 @@ message Proposal {
   float confidence = 9;
   string explanation = 10;
   int32 tier = 11;
+  string status = 12;       // "proposed" or "declined"
+  string suggestion = 13;   // manual remediation guidance (declined only)
 }
 
 message ProposalsReady {
@@ -219,6 +211,7 @@ message SessionResult {
   repeated FilePatch patches = 1;
   FixReport report = 2;
   repeated Violation remaining_violations = 3;
+  repeated Violation fixed_violations = 4;
 }
 
 message ExpirationWarning {

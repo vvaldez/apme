@@ -2,6 +2,8 @@
 
 This document defines the specialized agents used in APME development.
 
+**User-facing CLI (binary remains `apme-scan`):** **`check`** for assessment, **`remediate`** for applying fixes. The **Scanner Implementation Agent** below owns the engine’s internal **scan** pipeline and types (e.g. `ScanOptions`, `ScanChunk`); that is not the same as the CLI subcommand name.
+
 ## Agent Roles
 
 ### 1. Spec Writer Agent
@@ -104,7 +106,7 @@ This document defines the specialized agents used in APME development.
 
 **Capabilities**:
 - Create GitHub Actions workflows
-- Create AAP pre-flight checks
+- Create AAP pre-flight checks (document `apme-scan check` / `apme-scan remediate` where relevant)
 - Write integration documentation
 - Create example configurations
 

@@ -1,4 +1,4 @@
-"""Reporting gRPC servicer — persists scan/fix events to SQLite.
+"""Reporting gRPC servicer — persists check/remediate events to SQLite.
 
 Engine pods push ``ScanCompletedEvent`` and ``FixCompletedEvent`` messages
 to this servicer via gRPC (ADR-020 push model).  Each event is decomposed
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme.v1 import reporting_pb2, reporting_pb2_grpc
 from apme_gateway.db import get_session
-from apme_gateway.db.models import Proposal, Scan, ScanLog, Session, Violation
+from apme_gateway.db.models import Proposal, Scan, ScanLog, ScanPatch, Session, Violation
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +60,10 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         request: reporting_pb2.ScanCompletedEvent,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> reporting_pb2.ReportAck:
-        """Persist a completed scan event.
+        """Persist a completed check (scan) event.
 
         Args:
-            request: The scan completion event from an engine pod.
+            request: The check completion event from an engine pod.
             context: gRPC servicer context.
 
         Returns:
@@ -81,7 +81,7 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                     source=request.source or "cli",
                     trigger="cli",
                     created_at=_now_iso(),
-                    scan_type="scan",
+                    scan_type="check",
                     total_violations=request.summary.total if request.summary else 0,
                     auto_fixable=request.summary.auto_fixable if request.summary else 0,
                     ai_candidate=request.summary.ai_candidate if request.summary else 0,
@@ -93,7 +93,7 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                 _add_logs(db, request.scan_id, list(request.logs))
                 await db.commit()
         except Exception:
-            logger.exception("Failed to persist scan event %s", request.scan_id)
+            logger.exception("Failed to persist check event %s", request.scan_id)
             await context.abort(grpc.StatusCode.INTERNAL, "Persistence failure")
         return reporting_pb2.ReportAck()
 
@@ -102,10 +102,10 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         request: reporting_pb2.FixCompletedEvent,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> reporting_pb2.ReportAck:
-        """Persist a completed fix event.
+        """Persist a completed remediate (fix) event.
 
         Args:
-            request: The fix completion event from an engine pod.
+            request: The remediate completion event from an engine pod.
             context: gRPC servicer context.
 
         Returns:
@@ -123,7 +123,7 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                     source=request.source or "cli",
                     trigger="cli",
                     created_at=_now_iso(),
-                    scan_type="fix",
+                    scan_type="remediate",
                     total_violations=request.summary.total if request.summary else 0,
                     auto_fixable=request.summary.auto_fixable if request.summary else 0,
                     ai_candidate=request.summary.ai_candidate if request.summary else 0,
@@ -133,11 +133,13 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                 )
                 db.add(scan)
                 _add_violations(db, request.scan_id, list(request.remaining_violations))
+                _add_violations(db, request.scan_id, list(request.fixed_violations))
                 _add_proposals(db, request.scan_id, list(request.proposals))
                 _add_logs(db, request.scan_id, list(request.logs))
+                _add_patches(db, request.scan_id, list(request.patches))
                 await db.commit()
         except Exception:
-            logger.exception("Failed to persist fix event %s", request.scan_id)
+            logger.exception("Failed to persist remediate event %s", request.scan_id)
             await context.abort(grpc.StatusCode.INTERNAL, "Persistence failure")
         return reporting_pb2.ReportAck()
 
@@ -230,3 +232,23 @@ def _add_logs(db: AsyncSession, scan_id: str, logs: Sequence[object]) -> None:
                 level=entry.level,  # type: ignore[attr-defined]
             )
         )
+
+
+def _add_patches(db: AsyncSession, scan_id: str, patches: Sequence[object]) -> None:
+    """Convert proto FilePatch messages to ORM rows.
+
+    Args:
+        db: Active async database session.
+        scan_id: Owning scan UUID.
+        patches: Proto FilePatch messages.
+    """
+    for p in patches:
+        diff = p.diff  # type: ignore[attr-defined]
+        if diff:
+            db.add(
+                ScanPatch(
+                    scan_id=scan_id,
+                    file=p.path,  # type: ignore[attr-defined]
+                    diff=diff,
+                )
+            )

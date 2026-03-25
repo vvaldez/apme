@@ -25,7 +25,7 @@ The CLI grew into a **fat client** that embeds the entire engine. When
 engine, all validators (OPA, Native, Ansible), the YAML formatter
 (`ruamel.yaml` round-trip with 824 lines of customization), and the full
 remediation convergence loop — all in-process. The gRPC path is used only for
-the `scan` subcommand when running inside the pod; `fix`, `format`, and `cache`
+the `check` subcommand when running inside the pod; `remediate`, `format`, and `cache`
 always run locally.
 
 This happened incrementally: each feature needed a "works without the pod"
@@ -57,7 +57,7 @@ path, and the local fallback accumulated until the CLI became a monolith
 
 ### Forces in tension
 
-- Developers need `apme-scan scan .` to "just work" without starting a pod.
+- Developers need `apme-scan check .` to "just work" without starting a pod.
 - The pod is the correct architecture for production and CI.
 - A web UI is on the roadmap and needs the same backend capabilities.
 - The CLI should not require Podman/Docker for local development.
@@ -108,7 +108,7 @@ for each invocation, tears them down on exit.
 **Cons**:
 - 2-5 second startup latency per invocation (spawn 4-6 processes + health
   check polling)
-- Unacceptable for iterative `apme-scan fix .` workflows
+- Unacceptable for iterative `apme-scan remediate .` workflows
 - Process cleanup on SIGKILL is unreliable
 
 **Why not chosen**: Startup cost makes it impractical for the primary use
@@ -227,9 +227,9 @@ Version field enables auto-restart when the installed package is updated.
 
 | Subcommand     | gRPC RPC                              | CLI responsibility               |
 | -------------- | ------------------------------------- | -------------------------------- |
-| `scan`         | `ScanStream` (existing)               | Chunk files, render output       |
+| `check`        | `FixSession` (no `FixOptions`; ADR-039) | Chunk files, render output       |
 | `format`       | `FormatStream` (new)                  | Chunk files, apply diffs         |
-| `fix`          | `FixSession` bidi stream (ADR-028)    | Stream files, review proposals, apply patches |
+| `remediate`    | `FixSession` bidi stream (ADR-028)    | Stream files, review proposals, apply patches |
 | `cache`        | CacheMaintainer RPCs (existing)       | Dispatch to cache service        |
 | `health-check` | Health RPCs (existing)                | Render status                    |
 | `daemon`       | N/A (local process management)        | start / stop / status            |
@@ -253,7 +253,7 @@ response from streamed chunks) and `FixSession` (bidirectional stream per
 ADR-028) proto definitions, implemented in `primary_server.py`.
 
 **Phase C — Split cli.py.** Broke the monolith into `src/apme_engine/cli/`
-package: `parser.py`, `scan.py`, `fix.py`, `format_cmd.py`, `output.py`,
+package: `parser.py`, `check.py`, `remediate.py`, `format_cmd.py`, `output.py`,
 `daemon_cmd.py`, `health.py`, `cache.py`, `discovery.py`, `ansi.py`,
 `_convert.py`, `_models.py`.
 
@@ -301,6 +301,10 @@ no longer imported by the CLI.
   pass-throughs to the Ansible validator; venv lifecycle management
   remains per ADR-022 but moves server-side
 
+## Addendum
+
+> **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme-scan` binary name is unchanged.
+
 ## References
 
 - [PR #37](https://github.com/ansible/apme/pull/37): This ADR proposal and
@@ -317,3 +321,4 @@ no longer imported by the CLI.
 |------------|---------------|------------------|
 | 2026-03-18 | Architecture review | Initial proposal |
 | 2026-03-19 | AI Agent      | Accepted: implemented in PR #43. Updated FixStream → FixSession (bidi, ADR-028), updated subcommand table and phased rollout to reflect implementation. |
+| 2026-03-25 | APME Team     | ADR-039 addendum; subcommand table and examples: check/remediate, `FixSession` for check; module names `check.py` / `remediate.py`. |

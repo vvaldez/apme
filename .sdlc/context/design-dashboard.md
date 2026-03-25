@@ -46,7 +46,7 @@ in the presentation layer (ADR-020).
                    │  │  :50051  │  │  :50055  │  │  :50054  │      │
                    │  └──────────┘  └──────────┘  └──────────┘      │
                    └─────────┬──────────────────────────────────────┘
-                             │ gRPC (ScanStream, FixSession, Health)
+                             │ gRPC (FixSession, Health; unary Scan/Format as needed)
                              │
 ┌────────────────────────────┼──────────────────────────────────────┐
 │  Web Gateway :8080         │                                      │
@@ -55,7 +55,7 @@ in the presentation layer (ADR-020).
 │  ├── gRPC client ──────────┘                                      │
 │  ├── File discovery + chunking (mounted vol or SCM clone)         │
 │  ├── WebSocket ↔ FixSession bidi gRPC bridge (ADR-028)            │
-│  └── SQLite persistence (scan history, violations, proposals)     │
+│  └── SQLite persistence (activity history, violations, proposals)   │
 │                                                                    │
 │  Static SPA (PatternFly/React — standalone mode; see ADR-030)     │
 └───────────────────────────┬────────────────────────────────────────┘
@@ -78,11 +78,11 @@ one pod for the stream's lifetime). See ADR-029 for details.
 | **Authentication** | None — assumes trusted local access |
 | **Persistence** | SQLite file in a mounted volume |
 | **Deployment** | Container in the APME pod |
-| **State** | Local scan history, remediation queue |
+| **State** | Local activity history, remediation queue |
 
 ### What It Provides
 
-- **Scan history** — browse past scans without re-running
+- **Activity history** — browse past check/remediate runs without re-running
 - **Violation browser** — filter by rule, severity, file
 - **Code context** — view violations with surrounding lines
 - **Diagnostics** — engine timing, validator breakdown
@@ -94,7 +94,7 @@ one pod for the stream's lifetime). See ADR-029 for details.
 - Multi-user access
 - Authentication / authorization
 - Team collaboration features
-- Scheduled scans
+- Scheduled checks
 - Webhook notifications
 
 These are enterprise features handled by AAP Gateway integration.
@@ -148,7 +148,7 @@ For enterprise deployments, APME sits behind the **AAP Gateway** — the existin
 
 | Concern | Handled By |
 |---------|------------|
-| Scan execution | Primary service (gRPC) |
+| Check / remediate execution | Primary service (gRPC, `FixSession`) |
 | Validation | Native, OPA, Ansible, Gitleaks validators |
 | Remediation | Remediation engine (Phase 3) |
 | API endpoints | Stateless REST API (no auth, trusts gateway headers) |
@@ -183,8 +183,8 @@ The UI uses **PatternFly**, Red Hat's open source design system. This is mandato
 
 | View | Components |
 |------|------------|
-| **Scan list** | `Table`, `Toolbar`, `Pagination`, `Label` (severity badges) |
-| **Scan detail** | `Tabs`, `DescriptionList`, `CodeBlock`, `ExpandableSection` |
+| **Activity list** | `Table`, `Toolbar`, `Pagination`, `Label` (severity badges) |
+| **Activity / operation detail** | `Tabs`, `DescriptionList`, `CodeBlock`, `ExpandableSection` |
 | **Rule catalog** | `Table`, `SearchInput`, `Label` (validator/fixer badges) |
 | **Remediation queue** | `Table`, `CodeEditor` (diff view), `Button` (accept/reject) |
 | **Dashboard** | `Card`, `ChartDonut`, `ChartBar`, `ChartLine` |
@@ -199,13 +199,13 @@ The standalone UI exposes a REST API for the frontend. This API is also usable b
 ### Endpoints
 
 ```
-WS     /api/v1/ws/session             Unified scan + fix session (file upload,
+WS     /api/v1/ws/session             Unified check + remediate session (file upload,
                                        progress, Tier 1 results, AI proposals,
-                                       approval — all over one connection)
+                                       approval — all over one connection; maps to `FixSession`)
 
-GET    /api/v1/scans                  List scan history (paginated, filterable)
-GET    /api/v1/scans/{scan_id}        Get scan result (violations, diagnostics)
-DELETE /api/v1/scans/{scan_id}        Delete a scan record
+GET    /api/v1/activity               List activity history (paginated, filterable); records use engine `scan_id`
+GET    /api/v1/activity/{scan_id}     Get operation result (violations, diagnostics)
+DELETE /api/v1/activity/{scan_id}     Delete an activity record
 
 GET    /api/v1/health                 Aggregate health (UI + all backend services)
 
@@ -213,10 +213,10 @@ GET    /api/v1/rules                  List all rules
 GET    /api/v1/rules/{rule_id}        Rule detail
 ```
 
-### WebSocket Session Protocol (Unified Scan + Fix)
+### WebSocket Session Protocol (Unified Check + Remediate)
 
-A single WebSocket endpoint handles the full scan + fix lifecycle. The
-connection maps 1:1 to a `FixSession` bidi gRPC stream (ADR-028). The gateway
+A single WebSocket endpoint handles the full **check** and **remediate** lifecycle. The
+connection maps 1:1 to a `FixSession` bidi gRPC stream (ADR-028, ADR-039). The gateway
 translates between JSON WebSocket messages and protobuf SessionCommand/Event
 messages:
 
@@ -310,7 +310,7 @@ containers:
 
 ## Key Views
 
-### Scan List
+### Activity List
 
 | Element | PatternFly Component |
 |---------|---------------------|
@@ -320,7 +320,7 @@ containers:
 | Status badges | `Label` (green=completed, yellow=running, red=failed) |
 | Actions | `Button` (view, delete) |
 
-### Scan Detail
+### Activity / Operation Detail
 
 | Element | PatternFly Component |
 |---------|---------------------|
@@ -352,7 +352,7 @@ containers:
 
 | Element | PatternFly Component |
 |---------|---------------------|
-| Scan summary | `Card` with count, last scan time |
+| Activity summary | `Card` with count, last run time |
 | Violations over time | `ChartLine` |
 | Top violated rules | `ChartBar` |
 | Severity breakdown | `ChartDonut` |
@@ -364,9 +364,9 @@ containers:
 ### Phase 4a: Standalone UI Backend
 
 1. **FastAPI app** — REST API + WebSocket with gRPC client to Primary
-2. **SQLite persistence** — scan history, violations, proposals
-3. **WS /api/v1/ws/session** — unified scan + fix session over WebSocket
-4. **GET /api/v1/scans** — list with pagination/filtering
+2. **SQLite persistence** — activity history, violations, proposals
+3. **WS /api/v1/ws/session** — unified check + remediate session over WebSocket (`FixSession`)
+4. **GET /api/v1/activity** — list with pagination/filtering
 5. **Health endpoint** — aggregate backend health
 6. **Dockerfile** — add standalone-ui container to pod
 
@@ -374,8 +374,8 @@ containers:
 
 1. **React + Vite scaffold** — `frontend/` directory
 2. **PatternFly setup** — install `@patternfly/react-core`, `@patternfly/react-table`
-3. **Scan list view** — table with filters, pagination
-4. **Scan detail view** — violations, code context, diagnostics
+3. **Activity list view** — table with filters, pagination
+4. **Activity detail view** — violations, code context, diagnostics
 5. **Rule catalog** — searchable rule list
 6. **Dashboard** — charts and summary cards
 
@@ -399,19 +399,19 @@ containers:
 The standalone UI translates HTTP requests to gRPC calls:
 
 ```python
-@router.post("/api/v1/scans")
-async def create_scan(body: ScanCreate):
+@router.post("/api/v1/activity")
+async def create_operation(body: OperationCreate):
     request = build_scan_request(body.project_path, body.options)
 
     async with grpc.aio.insecure_channel("127.0.0.1:50051") as channel:
         stub = primary_pb2_grpc.PrimaryStub(channel)
         response = await stub.Scan(request, timeout=120)
 
-    scan_record = store_scan(response)
-    return scan_record
+    record = store_scan(response)
+    return record
 ```
 
-The UI container **never** runs the engine directly. It always delegates to Primary via gRPC. This means:
+The UI container **never** runs the engine directly. It always delegates to Primary via gRPC (unary `Scan` for simple flows, or **`FixSession`** for streaming check/remediate per ADR-039). This means:
 
 - The UI has no dependency on `apme_engine`
 - Primary's contract is the single source of truth
@@ -438,7 +438,7 @@ The `ScanDiagnostics` proto (ADR-013) is stored as JSON and rendered:
 |----------|-------|
 | **Directory selection** | Should the UI provide a file browser, or just accept a path input? Start with path input. |
 | **Live reload** | Should the UI auto-refresh when files change? Adds complexity; defer to v2. |
-| **Export** | Should scan results be exportable (JSON, SARIF, CSV)? Useful for CI integration. |
+| **Export** | Should check results be exportable (JSON, SARIF, CSV)? Useful for CI integration. |
 | **Theming** | Should the standalone UI support light/dark mode? PatternFly supports both. |
 
 ---
@@ -448,7 +448,8 @@ The `ScanDiagnostics` proto (ADR-013) is stored as JSON and rendered:
 - [ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md) — Governing ADR for the gateway backend
 - [ADR-030: Frontend Deployment Model](/.sdlc/adrs/ADR-030-frontend-deployment-model.md) — Standalone SPA vs. Backstage plugin
 - [ADR-028: Session-Based Fix Workflow](/.sdlc/adrs/ADR-028-session-based-fix-workflow.md) — FixSession bidi streaming protocol
-- [ADR-013: Structured Diagnostics](/.sdlc/adrs/ADR-013-structured-diagnostics.md) — Timing data captured per scan
+- [ADR-039: Unified Operation Stream](/.sdlc/adrs/ADR-039-unified-operation-stream.md) — Check/remediate via `FixSession`; `ScanStream` removed
+- [ADR-013: Structured Diagnostics](/.sdlc/adrs/ADR-013-structured-diagnostics.md) — Timing data captured per engine run
 - [ADR-020: Reporting Service](/.sdlc/adrs/ADR-020-reporting-service.md) — Event delivery model and persistence principles
 - [design-remediation.md](design-remediation.md) — Remediation engine (Phase 3)
 - [design-validators.md](design-validators.md) — Validator abstraction

@@ -1,4 +1,4 @@
-"""CLI integration tests for the format and fix subcommands.
+"""CLI integration tests for the format and remediate subcommands.
 
 Exercises the full CLI pipeline via subprocess against a messy YAML fixture.
 No containers required — runs in the normal test suite.
@@ -294,67 +294,42 @@ class TestFormatExclude:
 
 
 # ---------------------------------------------------------------------------
-# fix subcommand
+# remediate subcommand
 # ---------------------------------------------------------------------------
 
 
-class TestFixApply:
-    """fix --apply — format → idempotency check → (modernize stub)."""
+class TestRemediate:
+    """remediate — format + auto-fix, always writes to disk."""
 
     def test_formats_and_passes_idempotency(self, messy_file: Path) -> None:
-        """Fix --apply formats and passes idempotency check.
+        """Remediate formats and passes idempotency check.
 
         Args:
             messy_file: Fixture providing a messy YAML file.
 
         """
-        r = _cli("fix", "--apply", str(messy_file))
+        r = _cli("remediate", str(messy_file))
         assert r.returncode == 0
         assert "updated" in r.stderr.lower() or "no changes" in r.stderr.lower()
 
-    def test_file_is_formatted_after_fix(self, messy_file: Path) -> None:
-        """File passes format --check after fix --apply.
+    def test_file_is_formatted_after_remediate(self, messy_file: Path) -> None:
+        """File passes format --check after remediate.
 
         Args:
             messy_file: Fixture providing a messy YAML file.
 
         """
-        _cli("fix", "--apply", str(messy_file))
+        _cli("remediate", str(messy_file))
         r = _cli("format", "--check", str(messy_file))
-        assert r.returncode == 0, "File should pass format --check after fix --apply"
+        assert r.returncode == 0, "File should pass format --check after remediate"
 
     def test_remediation_runs_full_pipeline(self, messy_file: Path) -> None:
-        """Fix --apply runs full remediation pipeline.
+        """Remediate runs the full remediation pipeline.
 
         Args:
             messy_file: Fixture providing a messy YAML file.
 
         """
-        r = _cli("fix", "--apply", str(messy_file))
+        r = _cli("remediate", str(messy_file))
         assert r.returncode == 0
         assert "remediation" in r.stderr.lower()
-
-
-class TestFixCheck:
-    """fix --check — exit 1 if formatting changes are needed."""
-
-    def test_exits_1_on_messy_file(self, messy_file: Path) -> None:
-        """Fix --check on messy file exits 1.
-
-        Args:
-            messy_file: Fixture providing a messy YAML file.
-
-        """
-        r = _cli("fix", "--check", str(messy_file))
-        assert r.returncode == 1
-
-    def test_exits_0_after_apply(self, messy_file: Path) -> None:
-        """Fix --check exits 0 after fix --apply.
-
-        Args:
-            messy_file: Fixture providing a messy YAML file.
-
-        """
-        _cli("fix", "--apply", str(messy_file))
-        r = _cli("fix", "--check", str(messy_file))
-        assert r.returncode == 0

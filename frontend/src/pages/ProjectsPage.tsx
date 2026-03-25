@@ -18,7 +18,6 @@ import {
   SplitItem,
   TextInput,
 } from '@patternfly/react-core';
-import { SearchIcon } from '@patternfly/react-icons';
 import { createProject, listProjects } from '../services/api';
 import type { ProjectSummary } from '../types/api';
 import { timeAgo } from '../services/format';
@@ -45,6 +44,32 @@ export function ProjectsPage() {
   const [createUrl, setCreateUrl] = useState('');
   const [createBranch, setCreateBranch] = useState('main');
   const [creating, setCreating] = useState(false);
+  const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
+
+  const deriveNameFromUrl = useCallback((url: string): string => {
+    try {
+      const cleaned = url.replace(/\/+$/, '').replace(/\.git$/, '');
+      const lastSegment = cleaned.split('/').pop() || '';
+      return lastSegment
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+        .trim();
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const handleUrlChange = useCallback((_e: unknown, v: string) => {
+    setCreateUrl(v);
+    if (!nameManuallyEdited) {
+      setCreateName(deriveNameFromUrl(v));
+    }
+  }, [nameManuallyEdited, deriveNameFromUrl]);
+
+  const handleNameChange = useCallback((_e: unknown, v: string) => {
+    setCreateName(v);
+    setNameManuallyEdited(true);
+  }, []);
 
   const fetchProjects = useCallback(() => {
     setLoading(true);
@@ -65,6 +90,7 @@ export function ProjectsPage() {
       setCreateName('');
       setCreateUrl('');
       setCreateBranch('main');
+      setNameManuallyEdited(false);
       fetchProjects();
     } catch {
       // keep modal open
@@ -89,7 +115,7 @@ export function ProjectsPage() {
         ) : projects.length === 0 ? (
           <EmptyState>
             <EmptyStateBody>
-              No projects defined yet. Create one to get started with SCM-backed scanning.
+              No projects defined yet. Create one to get started.
             </EmptyStateBody>
           </EmptyState>
         ) : (
@@ -119,26 +145,13 @@ export function ProjectsPage() {
                           </FlexItem>
                           <FlexItem>
                             <span style={{ opacity: 0.7 }}>
-                              {proj.scan_count} scan{proj.scan_count !== 1 ? 's' : ''}
+                              {proj.scan_count} check{proj.scan_count !== 1 ? 's' : ''}
                             </span>
                           </FlexItem>
                           <FlexItem>
                             <span style={{ opacity: 0.7 }}>
-                              {proj.last_scanned_at ? timeAgo(proj.last_scanned_at) : 'Never scanned'}
+                              {proj.last_scanned_at ? timeAgo(proj.last_scanned_at) : 'Never checked'}
                             </span>
-                          </FlexItem>
-                          <FlexItem>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              icon={<SearchIcon />}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigate(`/projects/${proj.id}?action=scan`);
-                              }}
-                            >
-                              Scan
-                            </Button>
                           </FlexItem>
                         </Flex>
                       </SplitItem>
@@ -160,12 +173,12 @@ export function ProjectsPage() {
         <ModalBody>
           <Flex direction={{ default: 'column' }} gap={{ default: 'gapMd' }}>
             <FlexItem>
-              <label htmlFor="proj-name" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Name</label>
-              <TextInput id="proj-name" value={createName} onChange={(_e, v) => setCreateName(v)} placeholder="My Ansible Project" />
+              <label htmlFor="proj-url" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Repository URL</label>
+              <TextInput id="proj-url" value={createUrl} onChange={handleUrlChange} placeholder="https://github.com/org/repo.git" />
             </FlexItem>
             <FlexItem>
-              <label htmlFor="proj-url" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Repository URL</label>
-              <TextInput id="proj-url" value={createUrl} onChange={(_e, v) => setCreateUrl(v)} placeholder="https://github.com/org/repo.git" />
+              <label htmlFor="proj-name" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Name</label>
+              <TextInput id="proj-name" value={createName} onChange={handleNameChange} placeholder="My Ansible Project" />
             </FlexItem>
             <FlexItem>
               <label htmlFor="proj-branch" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Branch</label>

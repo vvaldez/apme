@@ -68,10 +68,10 @@ export function DashboardPage() {
       <PageHeader title="Dashboard" />
       <PageDashboard>
         <MetricCard title="Projects" count={summary?.total_projects ?? 0} />
-        <MetricCard title="Total Scans" count={summary?.total_scans ?? 0} />
+        <MetricCard title="Total Checks" count={summary?.total_scans ?? 0} />
         <MetricCard title="Current Violations" count={summary?.current_violations ?? 0} />
         <MetricCard title="Total Violations" count={summary?.total_violations ?? 0} />
-        <MetricCard title="Total Fixed" count={summary?.total_fixed ?? 0} />
+        <MetricCard title="Total Remediated" count={summary?.total_remediated ?? 0} />
         <MetricCard title="Avg Health" count={summary ? Math.round(summary.avg_health_score) : 0} />
 
         <PageDashboardCard title="Top 10 Cleanest" width="lg" height="md" to="/projects" linkText="View all">
@@ -104,7 +104,7 @@ export function DashboardPage() {
           )}
         </PageDashboardCard>
 
-        <PageDashboardCard title="Most Scanned" width="lg" height="md" to="/projects" linkText="View all">
+        <PageDashboardCard title="Most Active" width="lg" height="md" to="/projects" linkText="View all">
           {loading ? (
             <LoadingPlaceholder />
           ) : mostScanned.length === 0 ? (
@@ -144,9 +144,9 @@ function RankingTable({
           <th role="columnheader">Project</th>
           <th role="columnheader">Health</th>
           <th role="columnheader">Violations</th>
-          {showDaysSince && <th role="columnheader">Days Since Scan</th>}
-          {showScanCount && <th role="columnheader">Scans</th>}
-          <th role="columnheader">Last Scanned</th>
+          {showDaysSince && <th role="columnheader">Days Since Check</th>}
+          {showScanCount && <th role="columnheader">Checks</th>}
+          <th role="columnheader">Last Checked</th>
         </tr>
       </thead>
       <tbody>

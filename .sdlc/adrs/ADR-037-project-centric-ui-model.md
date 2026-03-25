@@ -30,10 +30,10 @@ Three forces drive this decision:
    and health tracking across time — something sessions (ephemeral, TTL-bounded)
    cannot provide.
 
-2. **Scan and fix are operations, not entities.** A scan or fix request against a
+2. **Check and remediate are operations, not entities.** A check or remediate request against a
    project should carry its own parameters (ansible version, collections, enable
-   AI) because users scan the same project with different configurations. The
-   ansible version in particular is a per-operation parameter — a user may scan
+   AI) because users check the same project with different configurations. The
+   ansible version in particular is a per-operation parameter — a user may check
    against 2.18, 2.19, and 2.20 to plan a migration. These are operation options,
    not project attributes.
 
@@ -44,8 +44,8 @@ Three forces drive this decision:
 ### What the current UI exposes
 
 The current SPA organizes data around sessions and scans at the top level.
-Navigation includes Sessions, Scans, Top Violations, Fix Tracker, AI Metrics as
-separate pages. The "New Scan" page is file-upload based — users manually select
+Navigation includes Sessions, Activity, Top Violations, Fix Tracker, AI Metrics as
+separate pages. The "New check" flow is file-upload based — users manually select
 files from their local machine and upload them through a WebSocket. There is no
 concept of a persistent project, no SCM integration, and no cross-project
 analytics.
@@ -66,19 +66,19 @@ A project record stores:
 - `created_at` — creation timestamp
 
 No ansible version, no collection specs, no scan configuration. These are
-per-operation parameters specified when the user triggers a scan or fix.
+per-operation parameters specified when the user triggers a check or remediate.
 
 ### Clone on demand
 
-Each scan or fix request triggers a fresh `git clone --depth 1` of the project's
-repo into a temporary directory. The gateway chunks the cloned files and drives
-`ScanStream` (scan) or `FixSession` (fix) against Primary. The temporary
-directory is cleaned up after the operation completes. This ensures scans always
+Each check or remediate request triggers a fresh `git clone --depth 1` of the project's
+repo into a temporary directory. The gateway chunks the cloned files and opens
+`FixSession` against Primary for both modes (check vs remediate determined by session options; ADR-039 — `ScanStream` removed). The temporary
+directory is cleaned up after the operation completes. This ensures checks always
 run against the current repo state, avoids stale persistent clones, and
 eliminates clone lifecycle management (no `clone_status` state machine, no sync
 endpoint, no persistent repo volume).
 
-### Scan and fix are the same infrastructure
+### Check and remediate are the same infrastructure
 
 The gateway's project operation driver handles both modes:
 
@@ -86,15 +86,14 @@ The gateway's project operation driver handles both modes:
 2. Derive `session_id = sha256(project.id)[:16]` (deterministic, ensures venv
    reuse across operations on the same project)
 3. Chunk files via `yield_scan_chunks()`
-4. If scan: open `ScanStream` to Primary
-5. If fix: open `FixSession` to Primary with `fix_options`
-6. Stream progress to the UI via WebSocket
-7. Persist results (scan + violations + proposals) to DB under the project
-8. Clean up temp directory
+4. Open `FixSession` to Primary (check-only vs remediate per request options / `fix_options`)
+5. Stream progress to the UI via WebSocket
+6. Persist results (violations, diagnostics, proposals) to DB under the project
+7. Clean up temp directory
 
-The difference between scan and fix is a flag on the request, not separate
+The difference between check and remediate is a flag on the request, not separate
 infrastructure. The interactive approval flow (proposals → approve → apply) adds
-more WebSocket messages in the fix path but uses the same connection.
+more WebSocket messages in the remediate path but uses the same connection.
 
 ### Session hiding
 
@@ -117,10 +116,10 @@ as-is for the playground.
 
 A cross-project dashboard provides portfolio-level visibility:
 
-- Health scores per project (0–100, computed from latest scan severity breakdown)
+- Health scores per project (0–100, computed from latest check severity breakdown)
 - Violation trends (improving / declining / stable)
-- Most scanned / least scanned projects
-- Longest time since last scan (stale projects)
+- Most checked / least checked projects
+- Longest time since last check (stale projects)
 - Top 10 cleanest vs top 10 highest-violation projects
 - Overall violation counts, fix rates, AI acceptance across all projects
 
@@ -140,9 +139,9 @@ initiated scans) but is removed from all user-facing APIs.
 Global Dashboard
   └── Project List
         └── Project Detail
-              ├── Overview (health, top violations, recent scans)
-              ├── Scans (history, trigger scan/fix with per-operation options)
-              ├── Violations (filterable, from latest scan)
+              ├── Overview (health, top violations, recent activity)
+              ├── Activity (history, trigger check/remediate with per-operation options)
+              ├── Violations (filterable, from latest check)
               ├── Fixes (applied remediations with diffs)
               ├── AI Suggestions (proposals, approve/reject)
               └── Settings (name, repo URL, branch, delete)
@@ -153,21 +152,21 @@ Playground (separate, no project association)
 ### WebSocket protocol
 
 New endpoint `WS /api/v1/projects/{project_id}/ws/operate` with a unified
-protocol for both scan and fix. The `fix` flag in the start message determines
+protocol for both check and remediate. The `remediate` flag in the start message determines
 the flow:
 
 | Direction | Message | When |
 |-----------|---------|------|
-| Client → Server | `{"type": "start", "fix": false, "options": {...}}` | Initiate scan or fix |
-| Client → Server | `{"type": "approve", "approved_ids": [...]}` | Fix flow: approve proposals |
+| Client → Server | `{"type": "start", "remediate": false, "options": {...}}` | Initiate check or remediate |
+| Client → Server | `{"type": "approve", "approved_ids": [...]}` | Remediate flow: approve proposals |
 | Client → Server | `{"type": "close"}` | Terminate |
 | Server → Client | `{"type": "cloning"}` | Repo clone started |
-| Server → Client | `{"type": "started", "scan_id": "..."}` | RPC opened |
+| Server → Client | `{"type": "started", "scan_id": "..."}` | RPC opened (engine-internal `scan_id` unchanged) |
 | Server → Client | `{"type": "progress", ...}` | Real-time progress |
-| Server → Client | `{"type": "tier1_complete", ...}` | Fix: Tier 1 results |
-| Server → Client | `{"type": "proposals", ...}` | Fix: AI proposals for review |
-| Server → Client | `{"type": "approval_ack", ...}` | Fix: approval confirmed |
-| Server → Client | `{"type": "result", ...}` | Final scan/fix result |
+| Server → Client | `{"type": "tier1_complete", ...}` | Remediate: Tier 1 results |
+| Server → Client | `{"type": "proposals", ...}` | Remediate: AI proposals for review |
+| Server → Client | `{"type": "approval_ack", ...}` | Remediate: approval confirmed |
+| Server → Client | `{"type": "result", ...}` | Final check/remediate result |
 | Server → Client | `{"type": "error", ...}` | Error |
 | Server → Client | `{"type": "closed"}` | Session ended |
 
@@ -236,10 +235,10 @@ Tag sessions and scans with a project name.
 
 ### Negative
 
-- **Fresh clone on every scan adds latency** (~2–10s for shallow clone depending
+- **Fresh clone on every check adds latency** (~2–10s for shallow clone depending
   on repo size and network)
 - **Gateway needs git** — new system dependency in the container image
-- **More complex gateway** — SCM clone + scan driver + project CRUD vs the
+- **More complex gateway** — SCM clone + operation driver + project CRUD vs the
   current pass-through WebSocket bridge
 
 ### Neutral
@@ -266,10 +265,14 @@ Tag sessions and scans with a project name.
 - ADR-020: Reporting service (CLI scans still flow through reporting sink)
 - ADR-022: Session-scoped venvs (sessions stay, just hidden from user)
 - ADR-024: Thin CLI (unaffected; gateway mirrors CLI's gRPC client role)
-- ADR-028: FixSession bidi stream (gateway drives it for project fix operations)
-- ADR-029: Web gateway architecture (extended with project CRUD and scan driver)
+- ADR-028: FixSession bidi stream (gateway drives it for project remediate operations)
+- ADR-029: Web gateway architecture (extended with project CRUD and operation driver)
 - ADR-030: Frontend deployment model (UI restructured around projects)
-- ADR-032: FQCN collection auto-discovery (collections discovered at scan time)
+- ADR-032: FQCN collection auto-discovery (collections discovered at check time)
+
+## Addendum
+
+> **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme-scan` binary name is unchanged. Detail routes use **`/activity/{id}`** (replacing `/scans/{id}`) where the product exposes per-run history.
 
 ## References
 
@@ -284,3 +287,4 @@ Tag sessions and scans with a project name.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-24 | APME Team | Initial proposal |
+| 2026-03-25 | APME Team | ADR-039 terminology: Activity, check/remediate, FixSession-only; `/activity/{id}`. |

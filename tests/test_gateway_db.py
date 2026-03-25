@@ -44,7 +44,7 @@ async def _seed_scan(
     scan_id: str = "scan-1",
     session_id: str = "abc123",
     project_path: str = "/proj",
-    scan_type: str = "scan",
+    scan_type: str = "check",
 ) -> None:
     """Insert a test scan row (requires session to exist).
 
@@ -52,7 +52,7 @@ async def _seed_scan(
         scan_id: Scan UUID.
         session_id: Owning session.
         project_path: Project root.
-        scan_type: Either "scan" or "fix".
+        scan_type: Either "check" or "remediate".
     """
     async with get_session() as db:
         db.add(
@@ -223,7 +223,7 @@ async def test_session_trend() -> None:
                 session_id="trend-s",
                 project_path="/p",
                 created_at="2024-01-01T00:00:00Z",
-                scan_type="scan",
+                scan_type="check",
                 total_violations=10,
                 auto_fixable=3,
             )
@@ -234,7 +234,7 @@ async def test_session_trend() -> None:
                 session_id="trend-s",
                 project_path="/p",
                 created_at="2024-01-02T00:00:00Z",
-                scan_type="fix",
+                scan_type="remediate",
                 total_violations=5,
                 auto_fixable=2,
             )
@@ -250,8 +250,8 @@ async def test_session_trend() -> None:
     assert rows[0].total_violations == 10
 
 
-async def test_fix_rates() -> None:
-    """Fix rates counts violations in fix-type scans only."""
+async def test_remediation_rates() -> None:
+    """Remediation rates counts violations in remediate-type runs only."""
     async with get_session() as db:
         db.add(Session(session_id="fr-s", project_path="/p", first_seen="t1", last_seen="t2"))
         db.add(
@@ -260,7 +260,7 @@ async def test_fix_rates() -> None:
                 session_id="fr-s",
                 project_path="/p",
                 created_at="t1",
-                scan_type="scan",
+                scan_type="check",
                 total_violations=2,
             )
         )
@@ -270,7 +270,7 @@ async def test_fix_rates() -> None:
                 session_id="fr-s",
                 project_path="/p",
                 created_at="t2",
-                scan_type="fix",
+                scan_type="remediate",
                 total_violations=1,
             )
         )
@@ -280,13 +280,13 @@ async def test_fix_rates() -> None:
         await db.commit()
 
     async with get_session() as db:
-        rows = await q.fix_rates(db)
+        rows = await q.remediation_rates(db)
 
     rule_ids = {r[0] for r in rows}
     assert "L001" in rule_ids
     assert "L002" in rule_ids
     scan_only = [r for r in rows if r[0] == "L001"]
-    assert scan_only[0][1] == 1  # only the fix-scan violation counts
+    assert scan_only[0][1] == 1  # only the remediate-run violation counts
 
 
 async def test_ai_acceptance() -> None:
@@ -299,7 +299,7 @@ async def test_ai_acceptance() -> None:
                 session_id="ai-s",
                 project_path="/p",
                 created_at="t1",
-                scan_type="fix",
+                scan_type="remediate",
             )
         )
         db.add(

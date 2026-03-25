@@ -39,8 +39,8 @@ Non-functional and technical constraints for APME implementation.
 
 | Metric | Target |
 |--------|--------|
-| Scan Speed | 100 playbooks in < 30 seconds |
-| Memory | < 512MB for typical scan |
+| Check speed | 100 playbooks in < 30 seconds |
+| Memory | < 512MB for a typical check run |
 | Concurrency | Support parallel validation |
 
 ## Security

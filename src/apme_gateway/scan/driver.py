@@ -1,9 +1,10 @@
-"""Project operation driver — clone, chunk, scan/fix via gRPC (ADR-037).
+"""Project operation driver — clone, chunk, check/remediate via gRPC (ADR-037, ADR-038).
 
 The gateway acts as a gRPC client to Primary for project-initiated operations.
 On each invocation the project repo is shallow-cloned into a temporary directory,
 chunked via the engine's ``yield_scan_chunks``, and streamed to Primary via
-``ScanStream`` (scan) or ``FixSession`` (fix).
+``FixSession`` (check mode omits ``fix_options`` on chunks; remediate mode sets
+them on the first chunk).
 """
 
 from __future__ import annotations
@@ -87,87 +88,16 @@ async def clone_repo(repo_url: str, branch: str, dest: str) -> None:
         raise RuntimeError(f"git clone failed (exit {result.returncode}): {result.stderr[:500]}")
 
 
-ProgressCallback = Callable[[primary_pb2.ScanEvent], Coroutine[Any, Any, None]]
+ProgressCallback = Callable[[primary_pb2.SessionEvent], Coroutine[Any, Any, None]]
 
 
-async def run_project_scan(
+async def run_project_operation(
     *,
     project_id: str,
     repo_url: str,
     branch: str,
     primary_address: str,
-    ansible_version: str = "",
-    collection_specs: list[str] | None = None,
-    progress_callback: ProgressCallback | None = None,
-    scan_id: str | None = None,
-) -> tuple[str, primary_pb2.ScanResponse | None]:
-    """Clone a project repo and run a scan via Primary ScanStream.
-
-    Args:
-        project_id: UUID of the project (used to derive session_id).
-        repo_url: SCM clone URL.
-        branch: Branch to clone.
-        primary_address: ``host:port`` for the Primary gRPC service.
-        ansible_version: Target ansible-core version.
-        collection_specs: Collection install specs.
-        progress_callback: Optional async callable invoked for each ScanEvent.
-        scan_id: Optional pre-generated scan ID; one is created if omitted.
-
-    Returns:
-        Tuple of (scan_id, ScanResponse or None).
-    """
-    if scan_id is None:
-        scan_id = uuid.uuid4().hex
-    session_id = derive_session_id(project_id)
-    temp_dir = tempfile.mkdtemp(prefix="apme_project_scan_")
-
-    try:
-        await clone_repo(repo_url, branch, temp_dir)
-
-        chunks = list(
-            yield_scan_chunks(
-                temp_dir,
-                scan_id=scan_id,
-                project_root_name="project",
-                ansible_core_version=ansible_version or None,
-                collection_specs=collection_specs or None,
-                session_id=session_id,
-            )
-        )
-
-        channel = grpc.aio.insecure_channel(
-            primary_address,
-            options=[
-                ("grpc.max_send_message_length", _GRPC_MAX_MSG),
-                ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
-            ],
-        )
-        try:
-            stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
-
-            response_stream = stub.ScanStream(iter(chunks), timeout=300)
-
-            result: primary_pb2.ScanResponse | None = None
-            async for event in response_stream:
-                if progress_callback:
-                    await progress_callback(event)
-                if event.HasField("result"):
-                    result = event.result
-
-            return scan_id, result
-        finally:
-            await channel.close(grace=None)
-
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-async def run_project_fix(
-    *,
-    project_id: str,
-    repo_url: str,
-    branch: str,
-    primary_address: str,
+    remediate: bool = False,
     ansible_version: str = "",
     collection_specs: list[str] | None = None,
     enable_ai: bool = True,
@@ -175,29 +105,34 @@ async def run_project_fix(
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     scan_id: str | None = None,
-) -> tuple[str, primary_pb2.ScanResponse | None]:
-    """Clone a project repo and run a fix session via Primary FixSession.
+) -> tuple[str, primary_pb2.SessionResult | None]:
+    """Clone a project repo and run check or remediate via Primary ``FixSession``.
+
+    Check mode (``remediate=False``) sends chunks without ``fix_options``.
+    Remediate mode attaches ``FixOptions`` on the first chunk.
 
     Args:
-        project_id: UUID of the project.
+        project_id: UUID of the project (used to derive session_id).
         repo_url: SCM clone URL.
         branch: Branch to clone.
-        primary_address: ``host:port`` for Primary gRPC.
+        primary_address: ``host:port`` for the Primary gRPC service.
+        remediate: When True, attach fix options and handle AI approval flow.
         ansible_version: Target ansible-core version.
         collection_specs: Collection install specs.
-        enable_ai: Enable AI remediation tier.
-        ai_model: AI model identifier.
-        progress_callback: Optional async callable for each SessionEvent.
-        approval_queue: Queue where approved proposal IDs are placed by the UI.
+        enable_ai: Enable AI remediation tier (remediate mode only).
+        ai_model: AI model identifier (remediate mode only).
+        progress_callback: Optional async callable for each ``SessionEvent``.
+        approval_queue: Queue of approved proposal IDs (remediate mode, when AI proposes).
         scan_id: Optional pre-generated scan ID; one is created if omitted.
 
     Returns:
-        Tuple of (scan_id, ScanResponse or None).
+        Tuple of (scan_id, SessionResult or None).
     """
     if scan_id is None:
         scan_id = uuid.uuid4().hex
     session_id = derive_session_id(project_id)
-    temp_dir = tempfile.mkdtemp(prefix="apme_project_fix_")
+    prefix = "apme_project_remediate_" if remediate else "apme_project_check_"
+    temp_dir = tempfile.mkdtemp(prefix=prefix)
 
     try:
         await clone_repo(repo_url, branch, temp_dir)
@@ -213,13 +148,13 @@ async def run_project_fix(
             )
         )
 
-        fix_opts = primary_pb2.FixOptions(
-            ansible_core_version=ansible_version,
-            collection_specs=collection_specs or [],
-            enable_ai=enable_ai,
-            ai_model=ai_model,
-        )
-        if chunks:
+        if remediate and chunks:
+            fix_opts = primary_pb2.FixOptions(
+                ansible_core_version=ansible_version,
+                collection_specs=collection_specs or [],
+                enable_ai=enable_ai,
+                ai_model=ai_model,
+            )
             chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
 
         command_queue: asyncio.Queue[primary_pb2.SessionCommand | None] = asyncio.Queue()
@@ -246,13 +181,13 @@ async def run_project_fix(
 
             response_stream = stub.FixSession(_command_stream(), timeout=600)
 
-            result: primary_pb2.ScanResponse | None = None
+            result: primary_pb2.SessionResult | None = None
             async for event in response_stream:
                 if progress_callback:
                     await progress_callback(event)
 
                 kind = event.WhichOneof("event")
-                if kind == "proposals" and approval_queue:
+                if kind == "proposals" and approval_queue is not None:
                     approved_ids = await approval_queue.get()
                     await command_queue.put(
                         primary_pb2.SessionCommand(approve=primary_pb2.ApprovalRequest(approved_ids=approved_ids))
@@ -268,3 +203,59 @@ async def run_project_fix(
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def run_project_scan(
+    *,
+    project_id: str,
+    repo_url: str,
+    branch: str,
+    primary_address: str,
+    ansible_version: str = "",
+    collection_specs: list[str] | None = None,
+    progress_callback: ProgressCallback | None = None,
+    scan_id: str | None = None,
+) -> tuple[str, primary_pb2.SessionResult | None]:
+    """Backward-compatible alias for check mode (``run_project_operation`` with remediate=False)."""
+    return await run_project_operation(
+        project_id=project_id,
+        repo_url=repo_url,
+        branch=branch,
+        primary_address=primary_address,
+        remediate=False,
+        ansible_version=ansible_version,
+        collection_specs=collection_specs,
+        progress_callback=progress_callback,
+        scan_id=scan_id,
+    )
+
+
+async def run_project_fix(
+    *,
+    project_id: str,
+    repo_url: str,
+    branch: str,
+    primary_address: str,
+    ansible_version: str = "",
+    collection_specs: list[str] | None = None,
+    enable_ai: bool = True,
+    ai_model: str = "",
+    progress_callback: ProgressCallback | None = None,
+    approval_queue: asyncio.Queue[list[str]] | None = None,
+    scan_id: str | None = None,
+) -> tuple[str, primary_pb2.SessionResult | None]:
+    """Backward-compatible alias for remediate mode (``run_project_operation`` with remediate=True)."""
+    return await run_project_operation(
+        project_id=project_id,
+        repo_url=repo_url,
+        branch=branch,
+        primary_address=primary_address,
+        remediate=True,
+        ansible_version=ansible_version,
+        collection_specs=collection_specs,
+        enable_ai=enable_ai,
+        ai_model=ai_model,
+        progress_callback=progress_callback,
+        approval_queue=approval_queue,
+        scan_id=scan_id,
+    )

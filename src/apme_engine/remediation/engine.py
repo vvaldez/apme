@@ -71,6 +71,7 @@ class FixReport:
         applied_patches: List of file patches applied.
         remaining_ai: Violations with no transform but ai_proposable.
         remaining_manual: Violations requiring manual fix.
+        fixed_violations: Tier 1 violations that were (or would be) fixed.
         ai_proposed: AI proposals that passed validation.
         oscillation_detected: True if oscillation was detected and loop bailed.
     """
@@ -80,6 +81,7 @@ class FixReport:
     applied_patches: list[FilePatch]
     remaining_ai: list[ViolationDict]
     remaining_manual: list[ViolationDict]
+    fixed_violations: list[ViolationDict]
     ai_proposed: list[AIProposal]
     oscillation_detected: bool
 
@@ -258,6 +260,7 @@ class RemediationEngine:
         prev_count = float("inf")
         oscillation = False
         passes = 0
+        actually_fixed: list[ViolationDict] = []
 
         for pass_num in range(1, self._max_passes + 1):
             passes = pass_num
@@ -297,6 +300,9 @@ class RemediationEngine:
                     if applied:
                         all_applied_rules[vf].append(rule_id)
                         applied_this_pass += 1
+                        snap = dict(v)
+                        snap["remediation_class"] = RemediationClass.AUTO_FIXABLE
+                        actually_fixed.append(snap)
                     else:
                         v["remediation_class"] = RemediationClass.AI_CANDIDATE
                         v["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
@@ -306,6 +312,9 @@ class RemediationEngine:
                         file_contents[vf] = result.content
                         all_applied_rules[vf].append(rule_id)
                         applied_this_pass += 1
+                        snap = dict(v)
+                        snap["remediation_class"] = RemediationClass.AUTO_FIXABLE
+                        actually_fixed.append(snap)
                     else:
                         v["remediation_class"] = RemediationClass.AI_CANDIDATE
                         v["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
@@ -402,6 +411,7 @@ class RemediationEngine:
             applied_patches=patches,
             remaining_ai=tier2,
             remaining_manual=tier3,
+            fixed_violations=actually_fixed,
             ai_proposed=ai_proposals,
             oscillation_detected=oscillation,
         )

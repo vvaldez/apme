@@ -113,7 +113,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-038)
+2. Use the next available number (currently ADR-040)
 3. Include:
    - Status (Proposed → Accepted)
    - Date

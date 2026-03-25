@@ -38,7 +38,7 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
      ┌──────────┐
      │   CLI    │  podman run --rm --pod apme-pod
      │ (on-the  │  -v $(pwd):/workspace:ro,Z
-     │  -fly)   │  apme-cli:latest apme-scan scan .
+     │  -fly)   │  apme-cli:latest apme-scan check .
      └──────────┘
 ```
 
@@ -52,9 +52,9 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 | **Ansible** | `apme-ansible` | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
 | **Gitleaks** | `apme-gitleaks` | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
 | **Galaxy Proxy** | `apme-galaxy-proxy` | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
-| **Gateway** | `apme-gateway` | 8080 / 50060 | Dual-protocol: FastAPI REST API (:8080) for the UI and a gRPC Reporting service (:50060) that receives `ScanCompletedEvent`/`FixCompletedEvent` from Primary. Persists scan history to SQLite. Health endpoint probes all upstream services. |
-| **UI** | `apme-ui` | 8081 | React SPA served by nginx. Proxies `/api/` to the Gateway at `127.0.0.1:8080`. Displays scan history, violations, sessions, and system health. |
-| **CLI** | `apme-cli` | — | Ephemeral. Reads project files, builds chunked `ScanRequest`, calls `Primary.ScanStream`, prints violations. Run with `--pod apme-pod` and CWD mounted |
+| **Gateway** | `apme-gateway` | 8080 / 50060 | Dual-protocol: FastAPI REST API (:8080) for the UI and a gRPC Reporting service (:50060) that receives `ScanCompletedEvent`/`FixCompletedEvent` from Primary. Persists activity history to SQLite. Health endpoint probes all upstream services. |
+| **UI** | `apme-ui` | 8081 | React SPA served by nginx. Proxies `/api/` to the Gateway at `127.0.0.1:8080`. Displays activity history, violations, sessions, and system health. |
+| **CLI** | `apme-cli` | — | Ephemeral. **Check** and **remediate** are user-facing actions; the engine uses **`FixSession`** internally for both (ADR-039). The CLI streams project files as chunked **`ScanChunk`** messages on that RPC (check mode omits remediate options). Unary **`Scan`**/`ScanRequest`/`ScanResponse` remain on Primary for simple request/response callers. Run with `--pod apme-pod` and CWD mounted |
 
 ## gRPC service contracts
 
@@ -65,15 +65,15 @@ Proto definitions live in `proto/apme/v1/`. Generated Python stubs in `src/apme/
 ```protobuf
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
-  rpc ScanStream(stream ScanChunk) returns (ScanResponse);
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
-  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);  // ADR-028
+  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);  // ADR-028, ADR-039
+  // ... ListAIModels, etc.
 }
 ```
 
-The CLI sends project files as chunked `ScanChunk` messages via `ScanStream` (streaming) or as a single `ScanRequest` (unary). Both include an optional `ScanOptions` (ansible-core version, collection specs) and a `scan_id`. Primary returns `ScanResponse` with merged violations, `ScanDiagnostics` (engine + validator timing data), and a `ScanSummary` (counts by remediation class). The `FixSession` RPC uses bidirectional streaming (ADR-028) for real-time progress, interactive AI proposal review, and session resume.
+**`ScanStream` was removed (ADR-039).** **Check** and **remediate** are user-facing actions; the engine uses **`FixSession`** internally for both (chunked **`ScanChunk`** uploads in `SessionCommand`). Unary **`Scan`** accepts a **`ScanRequest`** (optional **`ScanOptions`**, **`scan_id`**) and returns **`ScanResponse`** with merged violations, **`ScanDiagnostics`**, and **`ScanSummary`**. **`FixSession`** is bidirectional streaming for progress, AI proposal review, and session resume.
 
 ### Validator (`validate.proto`) — unified contract
 

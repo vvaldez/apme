@@ -297,12 +297,18 @@ import typer
 app = typer.Typer(help="APME - Ansible Playbook Modernization Engine")
 
 @app.command()
-def scan(
+def check(
     path: Path = typer.Argument(..., help="Path to playbook or directory"),
-    fix: bool = typer.Option(False, "--fix", help="Auto-fix issues"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output file"),
 ):
-    """Scan playbooks for AAP compatibility issues."""
+    """Check playbooks for AAP compatibility issues (read-only assessment)."""
+
+@app.command()
+def remediate(
+    path: Path = typer.Argument(..., help="Path to playbook or directory"),
+    apply: bool = typer.Option(False, "--apply", help="Write remediations in place"),
+):
+    """Apply format + Tier 1 (and optional AI) remediation via FixSession."""
 ```
 
 ### Output Formatting
@@ -314,7 +320,7 @@ from rich.table import Table
 console = Console()
 
 # Success
-console.print("[green]Scan complete[/green]")
+console.print("[green]Check complete[/green]")
 
 # Warning
 console.print("[yellow]Warning:[/yellow] 3 issues found")

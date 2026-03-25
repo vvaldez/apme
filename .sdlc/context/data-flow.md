@@ -1,11 +1,13 @@
 # Data Flow
 
-This document traces a scan request from CLI to violation output, covering every transformation and serialization boundary.
+This document traces a **check** request from CLI to violation output, covering every transformation and serialization boundary. (The engine still **scans** files internally; the user action is **check**, not “run a scan.”)
+
+**ADR-039:** `ScanStream` was removed. The thin CLI and gateway use **`FixSession`** for both **check** and **remediate**; the sequence below shows the engine pipeline and validator fan-out once Primary has the project files (whether they arrived via unary `Scan` or chunked `FixSession` upload).
 
 ## Request Lifecycle
 
 ```
-User runs:  apme-scan scan /path/to/project
+User runs:  apme-scan check /path/to/project
             │
             ▼
 ┌───────────────────────────────────────────────────────┐
@@ -20,7 +22,7 @@ User runs:  apme-scan scan /path/to/project
 │     - files[] = File(path=relative, content=bytes)    │
 │     - options (ansible_core_version, collection_specs)│
 │                                                       │
-│  gRPC call: Primary.Scan(ScanRequest) ───────────────────────┐
+│  gRPC: Primary.Scan(ScanRequest) or FixSession (check mode) ─┐
 └───────────────────────────────────────────────────────┘       │
                                                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
@@ -280,7 +282,7 @@ Every violation, regardless of source validator, has the same structure:
 
 ## Local (In-Process) Mode
 
-When running without the daemon (`apme-scan /path` without `--primary-addr`), the CLI runs everything in-process:
+When running without the daemon (`apme-scan check /path` without `--primary-addr`), the CLI runs everything in-process:
 
 1. Engine runs directly (no temp dir, no gRPC)
 2. `NativeValidator` and `OpaValidator` run in the same process

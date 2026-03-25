@@ -61,17 +61,17 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e ".[dev]"
 
-# Run a scan
-apme-scan scan /path/to/playbook-or-project
+# Run a check (user-facing); engine runs the internal scan pipeline
+apme-scan check /path/to/playbook-or-project
 
 # JSON output
-apme-scan scan --json .
+apme-scan check --json .
 
 # Diagnostics: summary + top 10 slowest rules
-apme-scan scan -v .
+apme-scan check -v .
 
 # Diagnostics: full per-rule breakdown
-apme-scan scan -vv .
+apme-scan check -vv .
 
 # Format YAML files (show diff)
 apme-scan format /path/to/project
@@ -82,14 +82,14 @@ apme-scan format --apply /path/to/project
 # CI check mode (exit 1 if changes needed)
 apme-scan format --check /path/to/project
 
-# Full fix pipeline: format → idempotency check → re-scan → modernize
-apme-scan fix --apply /path/to/project
+# Full remediate pipeline: format → idempotency check → re-scan → modernize
+apme-scan remediate --apply /path/to/playbook-or-project
 
-# AI-assisted fixes (requires Abbenay daemon)
-apme-scan fix --ai --apply /path/to/project
+# AI-assisted remediation (requires Abbenay daemon)
+apme-scan remediate --ai --apply /path/to/playbook-or-project
 
 # AI with auto-approve (no interactive review)
-apme-scan fix --ai --auto-approve --apply /path/to/project
+apme-scan remediate --ai --auto-approve --apply /path/to/playbook-or-project
 ```
 
 ### Container deployment (Podman)
@@ -101,12 +101,12 @@ apme-scan fix --ai --auto-approve --apply /path/to/project
 # Start the pod (Primary + Native + OPA + Ansible + Gitleaks + Galaxy Proxy)
 ./containers/podman/up.sh
 
-# Scan a project (CLI container, on-the-fly)
+# Check a project (CLI container, on-the-fly)
 cd /path/to/your/project
 /path/to/apme/containers/podman/run-cli.sh
 
 # With options
-containers/podman/run-cli.sh scan --json .
+containers/podman/run-cli.sh check --json .
 ```
 
 ### Health check
@@ -139,8 +139,8 @@ abbenay daemon start
 # Set consumer auth token for inline policy (required)
 export APME_ABBENAY_TOKEN="your-token"
 
-# Fix with AI
-apme-scan fix --ai --apply /path/to/project
+# Remediate with AI
+apme-scan remediate --ai --apply /path/to/playbook-or-project
 ```
 
 ### Container daemon
@@ -161,7 +161,7 @@ podman run -d --name abbenay \
   ghcr.io/redhat-developer/abbenay:latest
 
 # Point APME at the Abbenay container via gRPC TCP
-APME_ABBENAY_ADDR=localhost:50057 apme-scan fix --ai --apply .
+APME_ABBENAY_ADDR=localhost:50057 apme-scan remediate --ai --apply .
 ```
 
 ### CLI flags
@@ -185,7 +185,7 @@ APME_ABBENAY_ADDR=localhost:50057 apme-scan fix --ai --apply .
 
 ## Scaling
 
-Scale pods, not services within a pod. Each pod is a self-contained stack that can process a scan request end-to-end. For more throughput, run multiple pods behind a load balancer. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#scaling).
+Scale pods, not services within a pod. Each pod is a self-contained stack that can process check and remediate workloads end-to-end. For more throughput, run multiple pods behind a load balancer. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#scaling).
 
 ## Tests
 
@@ -220,8 +220,8 @@ src/apme_engine/
   ├── venv_manager/     Session-scoped venv lifecycle (VenvSessionManager)
   ├── remediation/      Tier 1 transforms + AI escalation
   ├── formatter.py      YAML formatter (phase 1 remediation)
-  ├── cli/              CLI entry point (scan, format, fix, health-check)
-  └── runner.py         scan orchestration
+  ├── cli/              CLI entry point (check, format, remediate, health-check)
+  └── runner.py         scan orchestration (engine-internal pipeline)
 src/apme_gateway/       API gateway (FastAPI, REST/WebSocket, SQLite)
 src/galaxy_proxy/       Galaxy → PEP 503 wheel proxy
 frontend/               React operator UI (Vite + TypeScript)
@@ -258,9 +258,9 @@ tests/                  unit, integration, rule doc coverage
 
 ### Phase 2 — Modernization Engine
 
-- `fix` subcommand: format → idempotency gate → re-scan → semantic transforms.
-- **`is_finding_resolvable()` partition**: each rule declares a `fixable` attribute; the fix pipeline splits findings into auto-fixable vs manual/AI.
-- **Multi-pass convergence loop**: scan → fix → rescan → repeat until stable or oscillation detected (max N passes).
+- `remediate` subcommand: format → idempotency gate → re-scan → semantic transforms.
+- **`is_finding_resolvable()` partition**: each rule declares a `fixable` attribute; the remediate pipeline splits findings into auto-fixable vs manual/AI.
+- **Multi-pass convergence loop**: remediate applies transforms and re-runs the internal scan pipeline until stable or oscillation detected (max N passes).
 - **`module_metadata.json`**: machine-readable module lifecycle data (introduced, deprecated, removed, parameter renames) generated from `ansible-doc` across core versions. M-series rules become data-driven lookups instead of per-rule hardcoded logic.
 
 ### Phase 2a — New Rules
@@ -281,7 +281,7 @@ tests/                  unit, integration, rule doc coverage
 
 ### Phase 4 — Web UI (in progress)
 
-Operator UI for scan + fix sessions, health monitoring, and findings management. API gateway (FastAPI), REST/WebSocket API, persistence (SQLite), and React frontend. See [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) for the full design.
+Operator UI for **check** and **remediate** sessions, **Activity** (history), health monitoring, and findings management. API gateway (FastAPI), REST/WebSocket API (`/api/v1/activity`, etc.), persistence (SQLite), and React frontend. Operation streaming uses `FixSession` gRPC (ADR-039). See [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) for the full design.
 
 ## License
 

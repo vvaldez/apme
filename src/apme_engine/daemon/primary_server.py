@@ -49,7 +49,6 @@ from apme.v1.primary_pb2 import (
     ProposalsReady,
     ScanChunk,
     ScanDiagnostics,
-    ScanEvent,
     ScanOptions,
     ScanRequest,
     ScanResponse,
@@ -71,7 +70,7 @@ from apme_engine.daemon.session import ResourceExhaustedError, SessionState, Ses
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.jsonpickle_handlers import register_engine_handlers
 from apme_engine.engine.models import AnsibleRunContext, ViolationDict
-from apme_engine.log_bridge import attach_collector, attach_stream_sink, merge_logs
+from apme_engine.log_bridge import attach_collector, merge_logs
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import VenvSessionManager
 
@@ -722,148 +721,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     with contextlib.suppress(OSError):
                         shutil.rmtree(temp_dir)
 
-    async def ScanStream(
-        self,
-        request_stream: AsyncIterator[ScanChunk],
-        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
-    ) -> AsyncIterator[ScanEvent]:
-        """Handle streaming Scan RPC with real-time progress delivery.
-
-        Accumulates chunked files, then runs the scan pipeline while
-        streaming ``ProgressUpdate`` milestones back to the client as
-        they occur.  The final event carries the full ``ScanResponse``.
-
-        Args:
-            request_stream: Async iterator of ScanChunk messages.
-            context: gRPC servicer context.
-
-        Yields:
-            ScanEvent: Progress updates followed by the result.
-
-        Raises:
-            Exception: Propagates unexpected errors after cleanup.
-        """
-        all_files, scan_id, project_root, opts, _ = await self._accumulate_chunks(request_stream)
-        session_id = opts.session_id if opts else ""
-        temp_dir: Path | None = None
-        pipeline_task: asyncio.Task[tuple] | None = None  # type: ignore[type-arg]
-
-        queue: asyncio.Queue[ProgressUpdate] = asyncio.Queue()
-        streamed_entries: list[ProgressUpdate] = []
-
-        with attach_stream_sink(queue):
-            try:
-                peer = context.peer()
-                metadata = dict(context.invocation_metadata() or ())
-                user_agent = metadata.get("user-agent", "unknown")
-                logger.info(
-                    "ScanStream: start (%d files, req=%s, peer=%s, ua=%s)",
-                    len(all_files),
-                    scan_id,
-                    peer,
-                    user_agent,
-                )
-
-                if not all_files:
-                    yield ScanEvent(result=ScanResponse(scan_id=scan_id, violations=[], logs=[]))
-                    return
-
-                try:
-                    temp_dir = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        _write_chunked_fs,
-                        all_files,
-                    )
-                except ValueError as ve:
-                    await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
-                assert temp_dir is not None
-
-                pipeline_task = asyncio.create_task(
-                    self._scan_pipeline(
-                        temp_dir,
-                        all_files,
-                        scan_id,
-                        ansible_core_version=opts.ansible_core_version if opts else "",
-                        collection_specs=list(opts.collection_specs) if opts else [],
-                        session_id=session_id,
-                    )
-                )
-
-                while not pipeline_task.done():
-                    try:
-                        entry = await asyncio.wait_for(queue.get(), timeout=0.25)
-                        streamed_entries.append(entry)
-                        yield ScanEvent(progress=entry)
-                    except asyncio.TimeoutError:
-                        continue
-
-                while not queue.empty():
-                    entry = queue.get_nowait()
-                    streamed_entries.append(entry)
-                    yield ScanEvent(progress=entry)
-
-                violations, diag, resolved_sid, vlogs, _ = pipeline_task.result()
-
-                for vlog_batch in vlogs:
-                    for vlog in vlog_batch:
-                        yield ScanEvent(progress=vlog)
-
-                from apme_engine.remediation.partition import add_classification_to_violations
-                from apme_engine.remediation.transforms import build_default_registry
-
-                registry = build_default_registry()
-                add_classification_to_violations(violations, registry)
-
-                from apme_engine.remediation.partition import count_by_remediation_class, count_by_resolution
-
-                rem_counts = count_by_remediation_class(violations)
-                res_counts = count_by_resolution(violations)
-                summary = ScanSummary(
-                    total=len(violations),
-                    auto_fixable=rem_counts.get("auto-fixable", 0),
-                    ai_candidate=rem_counts.get("ai-candidate", 0),
-                    manual_review=rem_counts.get("manual-review", 0),
-                    by_resolution=res_counts,
-                )
-
-                all_logs = merge_logs(streamed_entries, vlogs)
-                proto_violations = [violation_dict_to_proto(v) for v in violations]
-
-                await emit_scan_completed(
-                    ScanCompletedEvent(
-                        scan_id=scan_id,
-                        session_id=resolved_sid,
-                        project_path=project_root,
-                        source="cli",
-                        violations=proto_violations,
-                        diagnostics=diag,
-                        summary=summary,
-                        logs=all_logs,
-                    )
-                )
-
-                yield ScanEvent(
-                    result=ScanResponse(
-                        violations=proto_violations,
-                        scan_id=scan_id,
-                        diagnostics=diag,
-                        summary=summary,
-                        session_id=resolved_sid,
-                        logs=all_logs,
-                    )
-                )
-            except Exception as e:
-                logger.exception("ScanStream failed (req=%s): %s", scan_id, e)
-                raise
-            finally:
-                if pipeline_task is not None and not pipeline_task.done():
-                    pipeline_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await pipeline_task
-                if temp_dir is not None and temp_dir.is_dir():
-                    with contextlib.suppress(OSError):
-                        shutil.rmtree(temp_dir)
-
     # ── Format RPCs ───────────────────────────────────────────────────
 
     async def Format(self, request: FormatRequest, context: grpc.aio.ServicerContext) -> FormatResponse:  # type: ignore[type-arg]
@@ -1316,6 +1173,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session.remaining_manual = list(report.remaining_manual)
 
         remaining_violations = [violation_dict_to_proto(v) for v in report.remaining_ai + report.remaining_manual]
+        fixed_violation_protos = [violation_dict_to_proto(v) for v in report.fixed_violations]  # type: ignore[arg-type]
         session.report = FixReport(
             passes=report.passes,
             fixed=report.fixed,
@@ -1323,6 +1181,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             remaining_manual=len(report.remaining_manual),
             oscillation_detected=report.oscillation_detected,
             remaining_violations=remaining_violations,
+            fixed_violations=fixed_violation_protos,
         )
 
         _t1_done = ProgressUpdate(
@@ -1420,18 +1279,19 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         """Convert AIProposal objects into Proposal protos with diff data.
 
         Each AIPatch within an AIProposal becomes a separate Proposal proto
-        with before_text, after_text, and diff_hunk populated from the AI
-        engine output.
+        with status="proposed". Skipped violations become Proposal protos
+        with status="declined" carrying the AI's reason and suggestion.
 
         Args:
             ai_proposals: AIProposal objects from the remediation engine.
 
         Returns:
-            List of Proposal protos with full diff data.
+            List of Proposal protos (both proposed and declined).
         """
         from apme_engine.remediation.ai_provider import AIProposal  # noqa: PLC0415
 
         proposals: list[Proposal] = []
+        decline_idx = 0
         for idx, item in enumerate(ai_proposals):
             ap: AIProposal = item  # type: ignore[assignment]
 
@@ -1456,8 +1316,26 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     confidence=ap.confidence,
                     explanation=ap.explanation,
                     tier=2,
+                    status="proposed",
                 )
             )
+
+            for sk in ap.skipped:
+                proposals.append(
+                    Proposal(
+                        id=f"skip-{decline_idx:04d}",
+                        file=ap.file,
+                        rule_id=sk.rule_id,
+                        line_start=sk.line,
+                        line_end=sk.line,
+                        explanation=sk.reason,
+                        suggestion=sk.suggestion,
+                        tier=2,
+                        status="declined",
+                        confidence=0.0,
+                    )
+                )
+                decline_idx += 1
         return proposals
 
     @staticmethod
@@ -1553,26 +1431,37 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         remaining_violations = [violation_dict_to_proto(v) for v in session.remaining_ai + session.remaining_manual]  # type: ignore[arg-type]
 
+        report = session.report or FixReport()
+
         yield SessionEvent(
             result=SessionResult(
                 patches=patches,
-                report=session.report or FixReport(),
+                report=report,
                 remaining_violations=remaining_violations,
+                fixed_violations=list(report.fixed_violations),
             ),
         )
 
-        await emit_fix_completed(self._build_fix_event(session, remaining_violations))
+        await emit_fix_completed(
+            self._build_fix_event(
+                session, remaining_violations, list(report.fixed_violations), patches,
+            )
+        )
 
     @staticmethod
     def _build_fix_event(
         session: SessionState,
         remaining_violations: Sequence[object],
+        fixed_violations: Sequence[object] | None = None,
+        patches: Sequence[object] | None = None,
     ) -> FixCompletedEvent:
         """Build a FixCompletedEvent from completed session state.
 
         Args:
             session: Completed session.
             remaining_violations: Proto violations still open.
+            fixed_violations: Proto violations that Tier 1 would fix.
+            patches: FilePatch objects with per-file diffs.
 
         Returns:
             FixCompletedEvent ready for emission.
@@ -1606,10 +1495,11 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         from apme_engine.remediation.partition import count_by_remediation_class
 
         all_remaining = list(session.remaining_ai) + list(session.remaining_manual)
+        report = session.report or FixReport()
         rem_counts = count_by_remediation_class(all_remaining)  # type: ignore[arg-type]
         summary = ScanSummary(
-            total=len(all_remaining),
-            auto_fixable=rem_counts.get("auto-fixable", 0),
+            total=len(all_remaining) + report.fixed,
+            auto_fixable=report.fixed,
             ai_candidate=rem_counts.get("ai-candidate", 0),
             manual_review=rem_counts.get("manual-review", 0),
         )
@@ -1620,10 +1510,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             project_path=session.project_root,
             source="cli",
             remaining_violations=remaining_violations,  # type: ignore[arg-type]
+            fixed_violations=fixed_violations or [],  # type: ignore[arg-type]
             summary=summary,
-            report=session.report or FixReport(),
+            report=report,
             proposals=proposal_outcomes,
             logs=session.progress_logs,
+            patches=patches or [],  # type: ignore[arg-type]
         )
 
     async def _session_replay_state(

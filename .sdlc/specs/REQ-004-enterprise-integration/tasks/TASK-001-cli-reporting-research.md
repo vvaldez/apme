@@ -128,13 +128,13 @@ uv run pytest tests/test_ansi.py -v
 To see the CLI output formats in action:
 ```bash
 # ANSI terminal output (default)
-apme-scan scan .
+apme-scan check .
 
 # JSON output
-apme-scan scan . --json
+apme-scan check . --json
 
 # With diagnostics
-apme-scan scan . -v --primary-addr localhost:50051
+apme-scan check . -v --primary-addr localhost:50051
 ```
 
 **Related PRs**:

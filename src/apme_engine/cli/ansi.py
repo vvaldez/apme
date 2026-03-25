@@ -8,7 +8,7 @@ Usage:
 
     print(bold(red("Error:")), "something went wrong")
     print(severity_badge("high"))  # -> " ERROR " on red background
-    print(box("Summary\n2 errors", title="Scan Results"))
+    print(box("Summary\n2 errors", title="Check Results"))
 """
 
 from __future__ import annotations

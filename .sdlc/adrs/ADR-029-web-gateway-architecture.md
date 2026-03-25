@@ -62,7 +62,7 @@ interaction).
 |---|---|---|---|
 | File upload | Client reads `$CWD` | Gateway receives base64 files via WS, or reads mounted vol/SCM clone | File picker + WS upload |
 | File chunking (`ScanChunk`) | Client builds protobuf | Gateway builds protobuf from uploaded files | — |
-| `FixSession` bidi gRPC | Client holds stream | Gateway holds stream (unified scan + fix) | — |
+| `FixSession` bidi gRPC | Client holds stream | Gateway holds stream (unified check + remediate) | — |
 | `FormatStream` gRPC | Client call | Gateway call | — |
 | `Health` gRPC | Client call | Gateway call | — |
 | Write patched files | Client writes to disk | Gateway writes to disk | — |
@@ -72,7 +72,7 @@ interaction).
 | Approval decisions | Keyboard input | WebSocket relay | Accept/Reject buttons |
 | Diagnostics (`-v`/`-vv`) | Terminal | REST API | Charts, cards |
 | `--json` output | stdout | REST JSON response | — |
-| Scan history | None (stateless) | SQLite persistence | Browse/search |
+| Activity history | None (stateless) | SQLite persistence | Browse/search |
 
 ### Architecture
 
@@ -83,7 +83,7 @@ interaction).
                    │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │    │
                    │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
                    └─────────┬──────────────────────────────────────────────────┘
-                             │ gRPC (ScanStream, FixSession, Health, ...)
+                             │ gRPC (FixSession, FormatStream, Health, ...)
                              │
 ┌────────────────────────────┼──────────────────────────────────────────────────┐
 │  Web Gateway :8080         │                                                  │
@@ -91,7 +91,7 @@ interaction).
 │  │  FastAPI (async)                                                   │        │
 │  │  ├── REST API (/api/v1/scans, /health, /rules, ...)               │        │
 │  │  ├── WebSocket ↔ FixSession bidi gRPC bridge                      │        │
-│  │  ├── gRPC client → Primary (ScanStream, FormatStream, Health)     │        │
+│  │  ├── gRPC client → Primary (FixSession, FormatStream, Health)     │        │
 │  │  ├── File discovery + chunking (mounted vol or SCM clone)         │        │
 │  │  └── SQLite persistence (scan history, violations, proposals)     │        │
 │  └───────────────────────────────────────────────────────────────────┘        │
@@ -143,7 +143,7 @@ events to the gateway's reporting endpoint. Each engine pod gets
 
 Each browser session maps 1:1 to a server-side `FixSession` bidi gRPC stream
 (ADR-028). A single WebSocket endpoint (`WS /api/v1/ws/session`) handles the
-full scan + fix lifecycle: file upload, real-time progress, Tier 1 auto-fix
+full check + remediate lifecycle: file upload, real-time progress, Tier 1 auto-fix
 results, AI proposal delivery, interactive approval, and final results.
 
 The gateway translates between WebSocket JSON messages and protobuf
@@ -226,7 +226,7 @@ session management. The gateway exposes a stateless API.
 
 ### REST + WebSocket API
 
-Read operations are REST endpoints backed by SQLite. The scan + fix lifecycle
+Read operations are REST endpoints backed by SQLite. The check + remediate lifecycle
 runs over a single WebSocket connection:
 
 ```
@@ -373,6 +373,10 @@ engine pod. It needs:
 - ADR-030: Frontend deployment model (standalone vs. Backstage)
 - DR-003: Dashboard architecture (resolved by this ADR)
 - DR-008: Data persistence (resolved by this ADR — SQLite in gateway)
+
+## Addendum
+
+> **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme-scan` binary name is unchanged. REST paths such as `/api/v1/scans` may be exposed under **Activity** naming in the product (e.g. `/api/v1/activity`); the historical paths in this ADR describe the original gateway sketch.
 
 ## References
 

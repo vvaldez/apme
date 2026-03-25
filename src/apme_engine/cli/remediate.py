@@ -1,4 +1,4 @@
-"""Fix subcommand: bidirectional FixSession stream (ADR-028).
+"""Remediate subcommand: full remediation pipeline with Tier 1 auto-fix and optional AI proposals (ADR-028, ADR-038).
 
 Creates a fix session, streams progress events, handles interactive proposal
 review (or --auto-approve), and writes patched files on completion.
@@ -30,8 +30,8 @@ from apme_engine.cli.discovery import resolve_primary
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 
 
-def run_fix(args: argparse.Namespace) -> None:
-    """Execute the fix subcommand.
+def run_remediate(args: argparse.Namespace) -> None:
+    """Execute the remediate subcommand.
 
     Args:
         args: Parsed CLI arguments.
@@ -107,8 +107,6 @@ def run_fix(args: argparse.Namespace) -> None:
     channel, _ = resolve_primary(args)
     stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
 
-    exit_code = 0
-
     try:
         responses = stub.FixSession(command_iter(), timeout=600)
 
@@ -130,16 +128,6 @@ def run_fix(args: argparse.Namespace) -> None:
             elif oneof == "tier1_complete":
                 summary = event.tier1_complete
                 _render_tier1(summary)
-
-                if args.check:
-                    total = len(summary.applied_patches) + len(summary.format_diffs)
-                    if total:
-                        sys.stderr.write(f"{total} file(s) would be changed.\n")
-                        exit_code = 1
-                    else:
-                        sys.stderr.write("No changes needed.\n")
-                    cmd_queue.put(SessionCommand(close=CloseRequest()))
-                    continue
 
             elif oneof == "proposals":
                 proposals = list(event.proposals.proposals)
@@ -163,11 +151,7 @@ def run_fix(args: argparse.Namespace) -> None:
 
             elif oneof == "result":
                 result = event.result
-                if getattr(args, "apply", False):
-                    _write_patches(target, result.patches)
-                else:
-                    _show_diffs(result.patches)
-
+                _write_patches(target, result.patches)
                 _render_remaining(result)
                 cmd_queue.put(SessionCommand(close=CloseRequest()))
 
@@ -201,9 +185,6 @@ def run_fix(args: argparse.Namespace) -> None:
     finally:
         cmd_queue.put(None)
         channel.close()
-
-    if exit_code:
-        sys.exit(exit_code)
 
 
 def _render_tier1(summary: object) -> None:
@@ -316,18 +297,6 @@ def _write_patches(target: Path, patches: list[object]) -> None:
         count += 1
     sys.stderr.write(f"\n{count} file(s) updated.\n")
 
-
-def _show_diffs(patches: list[object]) -> None:
-    for p in patches:
-        if p.diff:  # type: ignore[attr-defined]
-            sys.stdout.write(p.diff)  # type: ignore[attr-defined]
-    count = len(patches)
-    if count:
-        sys.stderr.write(
-            f"\n{count} file(s) would be changed. Use --apply to write.\n",
-        )
-    else:
-        sys.stderr.write("No changes needed.\n")
 
 
 def _render_remaining(result: object) -> None:

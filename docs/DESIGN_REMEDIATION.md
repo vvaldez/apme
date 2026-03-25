@@ -6,7 +6,7 @@ The remediation engine is a separate service that consumes scan violations and p
 
 ```
 ┌──────────┐     ┌─────────────┐     ┌──────────┐     ┌──────────────────┐     ┌──────────┐
-│ Formatter│ ──► │ Idempotency │ ──► │  Scan    │ ──► │  Remediation    │ ──► │ Re-scan  │
+│ Formatter│ ──► │ Idempotency │ ──► │  Scan    │ ──► │  Remediation    │ ──► │ Re-check │
 │ (Phase 1)│     │    Gate     │     │ (engine  │     │    Engine       │     │          │
 │          │     │             │     │  + all   │     │                 │     │          │
 │ blind    │     │ format again│     │ validtrs)│     │ partition →     │     │ verify   │
@@ -44,7 +44,7 @@ The formatter is a **pre-condition** for the remediation engine. `apme-scan form
 
 ## Fix Pipeline
 
-The `apme-scan fix` command orchestrates the full pipeline:
+The `apme-scan remediate` command orchestrates the full pipeline:
 
 ```
 Phase 1: Format
@@ -55,7 +55,7 @@ Phase 2: Idempotency Gate
   └─► format again
   └─► assert zero diffs (if not: formatter bug, abort)
 
-Phase 3: Scan
+Phase 3: Engine check (internal scan pipeline)
   └─► run engine (parse → annotate → hierarchy)
   └─► fan out to all validators (Native, OPA, Ansible, Gitleaks)
   └─► merge + deduplicate violations
@@ -63,7 +63,7 @@ Phase 3: Scan
 Phase 4: Remediate (Tier 1 — deterministic)
   └─► partition violations via is_finding_resolvable()
   └─► apply Tier 1 transforms from the Transform Registry
-  └─► re-scan → repeat until converged or oscillation (max --max-passes)
+  └─► re-check (internal re-scan) → repeat until converged or oscillation (max --max-passes)
 
 Phase 5: AI Escalation (Tier 2 — AI-proposable)
   └─► route Tier 2 violations to Abbenay AIProvider (if --ai)
@@ -79,7 +79,7 @@ Phase 6: Report
 | Component | Location | Why |
 |-----------|----------|-----|
 | Formatter | CLI (in-process) or Primary (`Format` RPC) | No scan needed; operates on raw files |
-| Scan | Primary service (gRPC) or CLI (in-process) | Already implemented |
+| Engine check (internal scan) | Primary service (gRPC) / `FixSession` | Already implemented |
 | Remediation Engine | Primary service (`FixSession` RPC) | Needs access to scan results and file content; can call AIProvider |
 | Transform Registry | `src/apme_engine/remediation/transforms/` | Pure functions, no container needed |
 | AI Escalation | Abbenay daemon (gRPC) | Separate process/container, optional, enabled via `--ai` |
@@ -320,7 +320,7 @@ def remediate(files, max_passes=5):
             if result.applied:
                 write_file(v["file"], result.content)
 
-        # Re-scan to check progress
+        # Re-check progress (internal re-scan)
         new_violations = scan(files)
         new_count = len(new_violations)
 
@@ -399,18 +399,18 @@ A concurrent `asyncio` task sends a generic `ProgressUpdate(phase="heartbeat", m
 
 ## gRPC Contract
 
-### `FixSession` RPC on Primary (ADR-028)
+### `FixSession` RPC on Primary (ADR-028, ADR-039)
 
-The fix pipeline uses **bidirectional streaming** (`FixSession`) for real-time progress, interactive proposal review, and session resume:
+**Check** and **remediate** are user-facing actions; the engine uses **`FixSession`** internally for both (check mode without remediate options; remediate mode with `FixOptions`). The remediate pipeline uses **bidirectional streaming** (`FixSession`) for real-time progress, interactive proposal review, and session resume:
 
 ```protobuf
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
-  rpc ScanStream(stream ScanChunk) returns (ScanResponse);
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
   rpc Health(HealthRequest) returns (HealthResponse);
+  // ScanStream removed (ADR-039). FixSession carries ScanChunk uploads for check and remediate.
 }
 
 message FixOptions {
@@ -481,14 +481,14 @@ AI escalation uses the `AIProvider` protocol (ADR-025) with `AbbenayProvider` as
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The remediation engine lives inside Primary. It reuses Primary's existing scan pipeline and adds the transform → re-scan convergence loop. AI escalation is a gRPC call to the optional Abbenay daemon via the `AIProvider` protocol (ADR-025). See [DESIGN_AI_ESCALATION.md](DESIGN_AI_ESCALATION.md) for the full AI integration design.
+The remediation engine lives inside Primary. It reuses Primary's existing scan pipeline and adds the transform → re-check convergence loop. AI escalation is a gRPC call to the optional Abbenay daemon via the `AIProvider` protocol (ADR-025). See [DESIGN_AI_ESCALATION.md](DESIGN_AI_ESCALATION.md) for the full AI integration design.
 
 ## CLI Integration
 
-### `apme-scan fix`
+### `apme-scan remediate`
 
 ```
-apme-scan fix [target] [options]
+apme-scan remediate [target] [options]
 
 Options:
   --apply              Write fixes in place (without this, show diffs only)
@@ -507,7 +507,7 @@ Options:
 ```
 Phase 1: Formatting... 3 file(s) reformatted
 Phase 2: Idempotency check... Passed
-Phase 3: Scanning... 42 violation(s)
+Phase 3: Checking... 42 violation(s)
 Phase 4: Remediating...
   Pass 1: 28 fixable (Tier 1) → applied 26, 2 failed
   Pass 2: 4 fixable (Tier 1) → applied 4
@@ -524,8 +524,8 @@ Phase 6: Summary
 
 1. **Transform Registry + partition** — the data structures and registry pattern (done)
 2. **First transforms** — L021, L007, M001, M006, M008, M009, L046, and more (done — 20+ transforms)
-3. **Convergence loop** — scan → transform → re-scan loop with oscillation detection (done)
+3. **Convergence loop** — check (internal scan) → transform → re-check loop with oscillation detection (done)
 4. **`FixSession` RPC** — bidirectional streaming gRPC contract on Primary (done — ADR-028)
-5. **CLI `fix` integration** — interactive review, `--apply`, `--check`, `--auto-approve` (done)
+5. **CLI `remediate` integration** — interactive review, `--apply`, `--check`, `--auto-approve` (done)
 6. **AI escalation** — `AIProvider` protocol + `AbbenayProvider` + hybrid validation loop (in progress — Phase 3)
 7. **Web UI remediation queue** — accept/reject AI proposals (Phase 4)
