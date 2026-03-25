@@ -79,14 +79,16 @@ This makes rule lifecycle automatic. Engine upgrade adds L073? Primary restarts,
 
 ### 4. Overrides ride with `ScanRequest`
 
-Rule overrides (severity changes, enable/disable) are stored in the Gateway's database and delivered to the engine as part of the scan request. A new `repeated RuleOverride` field on `ScanOptions`:
+The Gateway sends the **full resolved rule configuration** — not just deltas — with every scan request. This keeps the engine stateless: it executes exactly what it's told, with no need to remember what it registered or cache previous overrides.
+
+A new `RuleConfig` message carries the complete per-rule state, and `ScanOptions` includes the full set:
 
 ```protobuf
-message RuleOverride {
+message RuleConfig {
   string rule_id = 1;
-  optional Severity severity = 2;   // override default severity
-  optional bool enabled = 3;        // override default enabled state
-  optional bool enforced = 4;       // when true, inline # apme:ignore is disregarded
+  Severity severity = 2;       // resolved severity (override > default)
+  bool enabled = 3;            // false = skip this rule entirely
+  bool enforced = 4;           // true = ignore inline # apme:ignore
 }
 
 message ScanOptions {
@@ -94,17 +96,20 @@ message ScanOptions {
   string ansible_core_version = 2;
   repeated string collection_specs = 3;
   string session_id = 4;
-  repeated RuleOverride rule_overrides = 5;   // NEW
+  repeated RuleConfig rule_configs = 5;   // NEW — full resolved rule set
 }
 ```
 
-The Primary applies overrides before fanning out to validators:
+At ~100 bytes per rule in protobuf, a 200-rule catalog is ~20KB — negligible compared to the file payloads already in `ScanRequest`.
 
-- Disabled rules are excluded from the validation fan-out
-- Severity overrides are applied to violations before returning results
-- Enforced rules ignore inline `# apme:ignore` annotations — the violation always counts regardless of code-level suppression. This is the compliance lever: an admin can mandate that certain rules (e.g., SEC, policy) cannot be suppressed by developers at the code level
+The Primary applies the rule configuration before fanning out to validators:
 
-The CLI can also pass overrides (from a local config file or flags), enabling the same mechanism outside the Gateway.
+- Rules with `enabled=false` are excluded from the validation fan-out
+- Severity values are applied to violations before returning results
+- Rules with `enforced=true` ignore inline `# apme:ignore` annotations — the violation always counts regardless of code-level suppression. This is the compliance lever: an admin can mandate that certain rules (e.g., SEC, policy) cannot be suppressed by developers at the code level
+- If the request includes a `rule_id` the Primary doesn't have → hard fail (see §5)
+
+The CLI can also pass rule configs (from a local `.apme/rules.yml` or flags), enabling the same mechanism outside the Gateway.
 
 ### 5. Hard fail on rule mismatch
 
