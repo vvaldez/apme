@@ -34,7 +34,13 @@ async def _run_grpc(listen: str, stop_event: asyncio.Event) -> None:
         listen: Bind address (e.g. ``0.0.0.0:50060``).
         stop_event: Signals graceful shutdown.
     """
-    server = grpc.aio.server()
+    _grpc_max_msg = 50 * 1024 * 1024  # 50 MiB — large scan/fix events exceed the 4 MiB default
+    server = grpc.aio.server(
+        options=[
+            ("grpc.max_receive_message_length", _grpc_max_msg),
+            ("grpc.max_send_message_length", _grpc_max_msg),
+        ],
+    )
     reporting_pb2_grpc.add_ReportingServicer_to_server(ReportingServicer(), server)  # type: ignore[no-untyped-call]
 
     from grpc_health.v1 import health, health_pb2, health_pb2_grpc
