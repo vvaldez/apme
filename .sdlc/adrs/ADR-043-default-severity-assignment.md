@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -156,7 +156,7 @@ enum Severity {
 
 The ambiguous legacy strings (`error`, `warning`) cannot be mechanically mapped because they were assigned inconsistently — OPA's `error` means different things for L004 (deprecated module → High) vs. L003 (missing play name → Low). These are resolved by the per-rule assignment table, not by string mapping.
 
-**Retire the engine `Severity` class.** The `Severity` class and `_severity_level_mapping` in `engine/models.py` are replaced by the proto enum. Native rule classes update their `severity` field to use the new enum values. OPA rules update their `"level"` strings. The old vocabulary is removed — no compatibility shim, since the legacy strings were never exposed to external consumers.
+**Retire the engine `Severity` class.** The `Severity` class and `_severity_level_mapping` in `engine/models.py` are replaced by the proto enum. Native rule classes update their `severity` field to use the new enum values. OPA rules update their `"level"` strings. The old vocabulary is removed. Note that legacy level strings are currently visible to consumers — the UI renders `Violation.level`, the CLI displays it, and the REST API exposes it. The migration to the enum is a coordinated breaking change across engine, Gateway, CLI, and UI; all components must be deployed together.
 
 ### 6. Static assignment table
 
@@ -256,7 +256,7 @@ Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide 
 
 ### Neutral
 
-- ADR-041's `default_severity` field semantics are unchanged — this ADR defines how the values are determined, not how they flow
+- ADR-041's `default_severity` field and override flow are unchanged — this ADR extends the enum from 5 to 6 values (adding Error) and defines the assignment criteria. ADR-041's registration table should be updated to reference the 6-value enum when this ADR is implemented
 - Override mechanism (ADR-041 §4) is unaffected — admins can still override any rule's severity regardless of the default
 - Plugin authors use the same enum and criteria but own their own assignments
 
