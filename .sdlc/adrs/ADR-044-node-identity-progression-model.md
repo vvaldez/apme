@@ -279,6 +279,17 @@ deploy.yml::play[0]
 
 The border is set by what's submitted: scanning a role in isolation makes the role `owned` and its dependencies `referenced`. Scanning a collection makes all sibling roles `owned`. This is a property of the scan session, not intrinsic to the node — the same role can be `owned` in one scan and `referenced` in another.
 
+**FQCN-aware ownership for collections**: Content within an Ansible collection references siblings via fully qualified collection names (e.g., `include_role: name=acme.webstack.common` from within the `acme.webstack` collection). These look syntactically identical to external references. The graph builder must read `galaxy.yml` to determine the collection's `namespace.name` and classify FQCNs matching that identity as `owned` self-references, not `referenced` external dependencies. Without this, a collection's internal roles would be treated as external and excluded from violation reporting and remediation.
+
+```
+Scanning: acme.webstack (galaxy.yml: namespace=acme, name=webstack)
+
+acme.webstack.deploy       → owned (same collection)
+acme.webstack.common       → owned (same collection)
+ansible.builtin.copy       → referenced (stdlib)
+community.general.ufw      → referenced (declared dependency)
+```
+
 ### Compatibility
 
 - `NodeIndex` (current YAML-path lookup) evolves into `ContentGraph`
