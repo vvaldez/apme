@@ -227,7 +227,7 @@ def _write_chunked_fs(files: list[File]) -> Path:
     Raises:
         ValueError: If a file path is absolute or escapes the temp root.
     """
-    tmp = Path(tempfile.mkdtemp(prefix="apme_primary_"))
+    tmp = Path(tempfile.mkdtemp(prefix="apme_primary_")).resolve()
     for f in files:
         rel = Path(f.path)
         if rel.is_absolute() or ".." in rel.parts:
