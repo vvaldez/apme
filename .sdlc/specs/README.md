@@ -20,6 +20,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-004 | Enterprise Integration | PHASE-003 | Draft |
 | REQ-008 | ROI Dashboard | PHASE-003 | Draft |
 | REQ-010 | Dependency Health Assessment | PHASE-003 | Draft |
+| REQ-011 | AA Deprecated Module Reporting | PHASE-003 | Draft |
 
 ## Directory Structure
 
@@ -37,7 +38,8 @@ specs/
 ├── REQ-003-security-compliance/
 ├── REQ-004-enterprise-integration/
 ├── REQ-008-roi-dashboard/
-└── REQ-010-dependency-health/
+├── REQ-010-dependency-health/
+└── REQ-011-aa-deprecated-reporting/
 ```
 
 ## Phase Relationship
@@ -55,7 +57,8 @@ PHASE-003: Enterprise Dashboard
 ├── REQ-003: Security & Compliance
 ├── REQ-004: Enterprise Integration
 ├── REQ-008: ROI Dashboard
-└── REQ-010: Dependency Health Assessment
+├── REQ-010: Dependency Health Assessment
+└── REQ-011: AA Deprecated Module Reporting
 ```
 
 See [phases/README.md](../phases/README.md) for phase details.
