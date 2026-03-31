@@ -343,9 +343,10 @@ Rebuild required after modifying: `src/**/*.py`, `validators/**/*.py`, `proto/**
 
 - **`main`** is the only long-lived branch (ADR-016). **Never commit directly to `main`** — all changes must go through a feature branch and PR.
 - Feature branches are short-lived and merge via PR.
-- Create your branch from the latest `main` before starting any work:
+- Always sync before branching to ensure you have the latest content:
   ```bash
   git fetch origin
+  git pull origin main
   git switch --create feat/<slug> origin/main
   ```
 - Branch naming: `feat/<slug>`, `fix/<slug>`, `docs/<slug>`, or `feature/REQ-NNN-description`.
@@ -745,11 +746,12 @@ updates:
 
 ```
 Start of session:
-  1. git fetch origin          — sync with upstream
-  2. /sdlc-status              — check state and blockers
-  3. /dr-review                — resolve any blocking DRs
-  4. Create a feature branch   — git checkout -b feat/<slug> origin/main
-  5. Pick a task or /req-new   — specify and execute
+  1. git fetch origin            — sync with upstream
+  2. git pull origin main        — ensure local main is current
+  3. /sdlc-status                — check state and blockers
+  4. /dr-review                  — resolve any blocking DRs
+  5. Create a feature branch     — git switch --create feat/<slug> origin/main
+  6. Pick a task or /req-new     — specify and execute
 
 Before every commit:
   1. Verify you are on a feature branch, NOT main
