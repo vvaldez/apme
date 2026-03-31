@@ -1,0 +1,128 @@
+---
+# Scaling anti-patterns playbook — demonstrates L061 violations and their
+# idiomatic Jinja2 filter replacements.
+#
+# The set_fact + loop + when pattern forces Ansible to evaluate the task once
+# per item, creating O(n) task invocations.  Jinja2 filters accomplish the
+# same filtering in a single expression.
+
+- name: Scaling anti-patterns — set_fact + loop + when
+  hosts: localhost
+  gather_facts: false
+  vars:
+    all_services:
+      - name: httpd
+        state: running
+      - name: postfix
+        state: stopped
+      - name: sshd
+        state: running
+      - name: cups
+        state: stopped
+
+    all_packages:
+      - name: vim
+        installed: true
+      - name: emacs
+        installed: false
+      - name: git
+        installed: true
+      - name: nano
+        installed: false
+
+    users:
+      - username: alice
+        role: admin
+      - username: bob
+        role: viewer
+      - username: carol
+        role: admin
+      - username: dave
+        role: viewer
+
+  tasks:
+    # ── BAD: L061 — set_fact + loop + when (with_items variant) ─────────
+    # Imperative loop: iterates every item, conditionally appends.
+    - name: Filter running services (anti-pattern — with_items)
+      ansible.builtin.set_fact:
+        running_services: "{{ running_services | default([]) + [item] }}"
+      with_items: "{{ all_services }}"
+      when: item.state == 'running'
+
+    # ── GOOD: equivalent Jinja2 filter ──────────────────────────────────
+    # - name: Filter running services (correct)
+    #   ansible.builtin.set_fact:
+    #     running_services: "{{ all_services | selectattr('state', 'equalto', 'running') | list }}"
+
+    # ── BAD: L061 — set_fact + loop + when (modern loop: syntax) ────────
+    - name: Collect installed packages (anti-pattern — loop)
+      ansible.builtin.set_fact:
+        installed_packages: "{{ installed_packages | default([]) + [item.name] }}"
+      loop: "{{ all_packages }}"
+      when: item.installed
+
+    # ── GOOD: equivalent Jinja2 filter ──────────────────────────────────
+    # - name: Collect installed packages (correct)
+    #   ansible.builtin.set_fact:
+    #     installed_packages: "{{ all_packages | selectattr('installed') | map(attribute='name') | list }}"
+
+    # ── BAD: L061 — set_fact + loop + when (short module name) ──────────
+    - name: Build admin user list (anti-pattern — short module name)
+      set_fact:
+        admin_users: "{{ admin_users | default([]) + [item.username] }}"
+      loop: "{{ users }}"
+      when: item.role == 'admin'
+
+    # ── GOOD: equivalent Jinja2 filter ──────────────────────────────────
+    # - name: Build admin user list (correct)
+    #   ansible.builtin.set_fact:
+    #     admin_users: "{{ users | selectattr('role', 'equalto', 'admin') | map(attribute='username') | list }}"
+
+    # ── BAD: L061 — set_fact + with_dict + when ────────────────────────
+    - name: Filter enabled features (anti-pattern — with_dict)
+      ansible.builtin.set_fact:
+        enabled_features: "{{ enabled_features | default({}) | combine({item.key: item.value}) }}"
+      with_dict:
+        logging: true
+        metrics: false
+        tracing: true
+        profiling: false
+      when: item.value | bool
+
+    # ── GOOD: equivalent Jinja2 filter ──────────────────────────────────
+    # - name: Filter enabled features (correct)
+    #   ansible.builtin.set_fact:
+    #     enabled_features: >-
+    #       {{ {'logging': true, 'metrics': false, 'tracing': true, 'profiling': false}
+    #          | dict2items | selectattr('value') | items2dict }}
+
+    # ──────────────────────────────────────────────────────────────────────
+    # CORRECT PATTERNS — these should NOT trigger L061
+    # ──────────────────────────────────────────────────────────────────────
+
+    # set_fact without a loop — just a simple variable assignment
+    - name: Set a simple fact (no loop, no when — OK)
+      ansible.builtin.set_fact:
+        app_env: production
+
+    # set_fact with loop but no when — transforms every item (not filtering)
+    - name: Transform all items (loop without when — OK)
+      ansible.builtin.set_fact:
+        uppercased: "{{ uppercased | default([]) + [item | upper] }}"
+      loop:
+        - hello
+        - world
+
+    # set_fact with when but no loop — conditional assignment (not filtering)
+    - name: Conditional fact (when without loop — OK)
+      ansible.builtin.set_fact:
+        db_host: replica.example.com
+      when: use_replica | default(false)
+
+    # Non-set_fact module with loop + when — different semantics
+    - name: Debug loop with condition (not set_fact — OK)
+      ansible.builtin.debug:
+        msg: "{{ item.name }} is running"
+      loop: "{{ all_services }}"
+      when: item.state == 'running'
+...

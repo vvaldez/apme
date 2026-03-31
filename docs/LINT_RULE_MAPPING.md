@@ -87,6 +87,7 @@ L002 was removed — its FQCN check (syntactic dot-count) is superseded by **M00
 | L055 | L055_meta_video_links.py | Role meta video_links URLs |
 | L056 | L056_sanity.py | Path matches sanity ignore pattern |
 | L060 | L060_line_length.py | Line too long (> 160 characters) |
+| L061 | L061_set_fact_loop_when.py | set_fact + loop + when scaling anti-pattern |
 
 ## Ansible validator rules — L057-L059
 
