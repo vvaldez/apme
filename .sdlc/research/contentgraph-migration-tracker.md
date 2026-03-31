@@ -9,11 +9,12 @@
 | Metric | Count |
 |--------|-------|
 | Total native rules | 96 |
-| Ported to GraphRule | 64 |
-| Remaining | 32 |
-| Migration % | 66.7% |
+| Ported to GraphRule | 74 |
+| Skipped (N/A) | 4 |
+| Remaining | 18 |
+| Migration % | 77.1% |
 
-## Ported Rules (64)
+## Ported Rules (74)
 
 ### Phase 2A — Scanner bootstrap + R108 (PR #138)
 
@@ -119,31 +120,41 @@
 | M019 | OmapPairsYamlTags | TASK_LOCAL |
 | M020 | VaultEncryptedTag | TASK_LOCAL |
 
+### Phase 2I — Annotation rules via module_options (PR #149)
+
+Strategy: Inline module-options field mapping + `is_templated()` heuristic
+instead of wiring the legacy annotation pipeline. Shared infrastructure
+in `_module_risk_mapping.py` provides FQCN-to-semantic-field lookup.
+
+| Rule | Name | Category |
+|------|------|----------|
+| R101 | CommandExec | TASK_LOCAL |
+| R103 | DownloadExec | CROSS_TASK |
+| R104 | InvalidDownloadSource | TASK_LOCAL |
+| R105 | OutboundTransfer | TASK_LOCAL |
+| R106 | InboundTransfer | TASK_LOCAL |
+| R107 | InsecurePkgInstall | TASK_LOCAL |
+| R109 | ConfigChange | TASK_LOCAL |
+| R113 | PkgInstall | TASK_LOCAL |
+| R114 | FileChange | TASK_LOCAL |
+| R115 | FileDeletion | TASK_LOCAL |
+
+### Phase 2I — Skipped (N/A)
+
+P001-P004 are severity NONE annotation producers with no user-facing
+findings. Their function is subsumed by R-rules reading `module_options`
+directly.
+
+| Rule | Name | Reason |
+|------|------|--------|
+| P001 | ModuleNameValidation | Annotation producer, severity NONE |
+| P002 | ModuleArgumentKeyValidation | Annotation producer, severity NONE |
+| P003 | ModuleArgumentValueValidation | Annotation producer, severity NONE |
+| P004 | VariableValidation | Annotation producer, severity NONE |
+
 ---
 
-## Remaining Rules (32)
-
-### Needs annotation infrastructure
-
-These rules read/write task annotations from module annotators.
-Requires exposing the annotation pipeline to `GraphRule`.
-
-| Rule | Name | Severity | What it checks |
-|------|------|----------|----------------|
-| P001 | ModuleNameValidation | NONE | Module name validation + annotation emit |
-| P002 | ModuleArgumentKeyValidation | NONE | Arg key validation + annotations |
-| P003 | ModuleArgumentValueValidation | NONE | Arg value validation + annotations |
-| P004 | VariableValidation | NONE | Variable validation + annotations |
-| R101 | CommandExec | LOW | Mutable command execution |
-| R103 | DownloadExec | HIGH | Download-then-execute pattern |
-| R104 | InvalidDownloadSource | HIGH | Inbound URL not allowlisted |
-| R105 | OutboundTransfer | MEDIUM | Outbound transfer with mutable dest |
-| R106 | InboundTransfer | MEDIUM | Inbound transfer with mutable src |
-| R107 | InsecurePkgInstall | HIGH | Package install with insecure flags |
-| R109 | ConfigChange | LOW | Mutable config key changes |
-| R113 | PkgInstall | MEDIUM | Parameterized package install target |
-| R114 | FileChange | LOW | Mutable file change path/src |
-| R115 | FileDeletion | LOW | File deletion risk |
+## Remaining Rules (18)
 
 ### Needs variable tracking (`variable_use` / `variable_set`)
 
@@ -197,7 +208,7 @@ comes from the collection resolver (same infrastructure).
 2. ~~**Phase 2F**: Role-metadata rules (7 rules)~~ **DONE**
 3. ~~**Phase 2G**: `module_options`-based rules (4 rules: L035, L046, R111, R112)~~ **DONE**
 4. ~~**Phase 2H**: `yaml_lines` extension + content rules (17 rules)~~ **DONE**
-5. **Phase 2I**: Annotation infrastructure + risk/policy rules (14 rules)
+5. ~~**Phase 2I**: Annotation rules via module_options (10 rules ported, 4 skipped)~~ **DONE**
 6. **Phase 2J**: Variable tracking rules (4 rules)
 7. **Phase 2K**: Collection/plugin targets + aggregation + R501 (12 rules)
    — R501 moved here (needs `possible_candidates` from collection resolver,
@@ -218,8 +229,9 @@ Fields still needed for full migration:
   R111, R112 port with a `_is_templated()` helper
 - [ ] `possible_candidates: list[tuple[str,str]]` — resolution candidates (R501)
   (requires collection resolver integration in `GraphBuilder`)
-- [x] `annotations: dict[str, object]` — already on `ContentNode`;
-  needs annotator pipeline adapted to populate it (Phase 2I)
+- [x] ~~`annotations: dict[str, object]`~~ — **NOT NEEDED**: Phase 2I rules
+  read `module_options` directly via `_module_risk_mapping.py` instead of
+  consuming `RiskAnnotation` objects. The annotation pipeline is bypassed.
 - [ ] `variable_use: list[VariableRef]` — variables referenced by this node
 - [ ] `variable_set: list[VariableRef]` — variables defined by this node
 - [ ] `COLLECTION` / `PLUGIN` node types in `NodeType` enum
@@ -244,16 +256,16 @@ Deliverables: `ContentGraph`, `GraphBuilder`, `GraphRule`, `NodeIdentity`,
 every edge type, `APME_USE_CONTENT_GRAPH` feature flag,
 `test_content_graph_shadow.py` structural equivalence.
 
-### Phase 2 — Rules + switchover: IN PROGRESS (64/96 = 66.7%)
+### Phase 2 — Rules + switchover: IN PROGRESS (74/96 = 77.1%, +4 skipped)
 
 Rule porting follows the priority taxonomy from ADR-044:
 
-| Category | ADR-044 count | Ported | Remaining | Status |
-|----------|---------------|--------|-----------|--------|
-| INHERITED_PROPERTY | ~10 | 9 | — | Done (Phases 2A-2B) |
-| SCOPE_AWARE | ~8 | 8 | — | Done (Phase 2C) |
-| TASK_LOCAL | ~78 | 40 | 32 | In progress (Phases 2D-2K) |
-| ROLE_METADATA | (subset of task-local) | 7 | — | Done (Phase 2F) |
+| Category | ADR-044 count | Ported | Skipped | Remaining | Status |
+|----------|---------------|--------|---------|-----------|--------|
+| INHERITED_PROPERTY | ~10 | 9 | — | — | Done (Phases 2A-2B) |
+| SCOPE_AWARE | ~8 | 8 | — | — | Done (Phase 2C) |
+| TASK_LOCAL | ~78 | 50 | 4 | 18 | In progress (Phases 2D-2K) |
+| ROLE_METADATA | (subset of task-local) | 7 | — | — | Done (Phase 2F) |
 
 End-of-Phase-2 gates (from ADR-044):
 - [ ] All 96 rules ported to `GraphRule`
