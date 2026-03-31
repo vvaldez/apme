@@ -1,7 +1,9 @@
 # APME Agent Configurations
 
 This document defines the specialized agents used in APME development. It is the
-operational companion to `CLAUDE.md` (the project constitution). Read both before
+operational companion to `CLAUDE.md` (the project constitution). All agents must also
+follow [SOP.md](SOP.md), which consolidates security, workflow, code quality, CI, git,
+and release procedures into a single actionable reference. Read all three before
 touching code.
 
 **User-facing CLI (binary remains `apme`):** **`check`** for assessment, **`remediate`** for applying fixes. Both use the bidirectional `FixSession` RPC under the hood (ADR-039). The **Engine Agent** below owns the internal scan pipeline; that is not the same as the CLI subcommand name.
@@ -312,6 +314,7 @@ When transitioning between agents:
 
 2. **Receiving Agent**:
    - Read `CLAUDE.md` for project constitution
+   - Read `SOP.md` for consolidated operating procedures
    - Read this file's **Architectural Invariants** section
    - Read relevant REQ and TASK specs
    - Read relevant ADRs (linked from REQ and this file)
@@ -421,6 +424,7 @@ All agents must:
 4. Commit with proper message format (Conventional Commits)
 5. Flag any spec ambiguities
 6. Verify no architectural invariants (above) were violated
+7. Follow operating procedures in `SOP.md` (security, git workflow, PR process, release)
 
 ### Prohibited direct invocations
 
