@@ -1217,10 +1217,16 @@ class GraphBuilder:
         nid = identity.path
 
         line_start, line_end = _extract_lines(task)
-        options = _safe_dict(getattr(task, "options", {}))
+        raw_options = _safe_dict(getattr(task, "options", {}))
         module_options = _safe_dict(getattr(task, "module_options", {}))
 
-        when_raw = options.get("when")
+        # Strip block/rescue/always from node options — children are
+        # already wired as graph edges via _wire_block_children().
+        # Keeping Task objects here would cause JSON serialization
+        # failures downstream.
+        options = {k: v for k, v in raw_options.items() if k not in ("block", "rescue", "always")}
+
+        when_raw = raw_options.get("when")
         when_expr: str | list[str] | None
         if isinstance(when_raw, str):
             when_expr = when_raw
@@ -1229,22 +1235,22 @@ class GraphBuilder:
         else:
             when_expr = None
 
-        loop_control_raw = options.get("loop_control")
+        loop_control_raw = raw_options.get("loop_control")
         loop_control: YAMLDict | None = loop_control_raw if isinstance(loop_control_raw, dict) else None
 
-        register_raw = options.get("register")
+        register_raw = raw_options.get("register")
         register = register_raw if isinstance(register_raw, str) else None
 
-        environment_raw = options.get("environment")
+        environment_raw = raw_options.get("environment")
         environment: YAMLDict | None = environment_raw if isinstance(environment_raw, dict) else None
 
-        no_log_raw = options.get("no_log")
+        no_log_raw = raw_options.get("no_log")
         no_log = no_log_raw if isinstance(no_log_raw, bool) else None
 
-        ignore_errors_raw = options.get("ignore_errors")
+        ignore_errors_raw = raw_options.get("ignore_errors")
         ignore_errors = ignore_errors_raw if isinstance(ignore_errors_raw, bool) else None
 
-        delegate_raw = options.get("delegate_to")
+        delegate_raw = raw_options.get("delegate_to")
         delegate_to = delegate_raw if isinstance(delegate_raw, str) else None
 
         exec_type = getattr(task, "executable_type", None)
