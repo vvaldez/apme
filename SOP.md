@@ -205,6 +205,9 @@ Phase (PHASE-NNN)
 | Let DRs accumulate | Blocked work piles up, ad-hoc decisions made inconsistently |
 | Skip specs | Scope creep, missing acceptance criteria, can't verify completion |
 | Make silent decisions | Inconsistent patterns, lost context, repeated debates |
+| Modify codebase to work around local environment | Breaks other contributors; the repo must work for the team, not one machine |
+
+**Never change production code or project structure to work around a local sandbox, IDE limitation, or environment-specific issue.** This is a team repository — implementations must be straightforward and adhere to the structure defined in `.sdlc/` and the project's architectural conventions. If your local environment cannot run something, fix the environment or raise a DR; do not reshape the codebase to fit a single workstation.
 
 *Source: [.sdlc/context/workflow.md](.sdlc/context/workflow.md) "Anti-Patterns to Avoid"*
 
@@ -280,6 +283,12 @@ logger.info("scan_started", path=str(path), fix_mode=fix)
 | Fixtures | `conftest.py`, shared helpers in `_test_helpers.py` |
 | Slow tests | Mark with `@pytest.mark.integration` |
 | Coverage | Floor: 36% (CI), target: 50% (`pyproject.toml`), ratchet up over time |
+
+**Before running tests, always stop the apme daemon** (`apme daemon stop`). A running daemon may be serving a stale build that does not reflect recent code changes, causing tests to pass or fail for the wrong reasons. Stop it, then run tests against the current source.
+
+**Never modify a test merely to make it pass.** When a test fails, the problem is in the recently written or changed production code, not in the test that caught it. Investigate the failure, discuss the root cause, and fix the implementation. Weakening assertions, loosening expected values, or deleting test cases to achieve a green run masks real defects and erodes test suite value.
+
+**After testing, stop the apme daemon** (`apme daemon stop`). Do not leave a daemon running after a test session — it will go stale as development continues and silently interfere with the next round of work.
 
 ---
 
