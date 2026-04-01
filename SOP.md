@@ -294,11 +294,26 @@ logger.info("scan_started", path=str(path), fix_mode=fix)
 
 ## 4. Pre-commit and CI Gates
 
-**Canonical sources:** [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), ADR-014, ADR-015, ADR-018
+**Canonical sources:** [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), ADR-014, ADR-015, ADR-018, ADR-047
 
-### 4.1 The Single Gate: `prek run --all-files`
+### 4.1 tox Is the Only Way to Run Things (ADR-047)
 
-All quality checks run through `prek` — both locally and in CI. This ensures the same checks pass everywhere.
+All developer tasks — lint, test, build, pod lifecycle, proto generation — run through `tox -e <env>`. Never invoke `pytest`, `ruff`, `mypy`, `prek`, or shell scripts directly. See the `/tox` agent skill for the full environment reference.
+
+| Task | Command |
+|------|---------|
+| Lint, format, type check | `tox -e lint` |
+| Unit tests | `tox -e unit` |
+| Integration tests | `tox -e integration` |
+| Single test | `tox -e unit -- -k test_name` |
+| Proto regeneration | `tox -e grpc` |
+| Build containers | `tox -e build` |
+| Build + start pod | `tox -e up` |
+| Stop pod | `tox -e down` |
+| Run CLI in pod | `tox -e cli -- <args>` |
+| List all environments | `tox l` |
+
+`tox -e lint` delegates to `prek run --all-files` under the hood, which runs:
 
 | Hook | What it does |
 |------|-------------|
@@ -310,27 +325,29 @@ All quality checks run through `prek` — both locally and in CI. This ensures t
 ### 4.2 Setup
 
 ```bash
-# Install prek
-uv tool install prek   # or: pip install prek
+# Install tox with uv integration
+uv tool install tox --with tox-uv
 
-# Install git hooks
+# Install git hooks (prek remains the hook runner)
+uv tool install prek
 prek install
 
-# Run manually
-prek run --all-files
+# Run quality gates
+tox -e lint
 ```
 
 ### 4.3 CI Enforcement
 
-- CI runs `prek run --all-files` on every PR targeting `main` (`.github/workflows/prek.yml`).
-- CI mirrors local hooks exactly (ADR-015) — no discrepancies between local and CI checks.
+- Lint CI uses `prek-action` directly (`.github/workflows/prek.yml`) for its built-in caching.
+- Test CI uses `uvx --with tox-uv tox -e <env>` — the same command developers run locally (ADR-015).
+- Every CI check has a corresponding tox environment. Local and CI checks are identical.
 - PRs that fail ruff, mypy, or pydoclint checks cannot merge.
 
 ### 4.4 Proto Stub Regeneration
 
 After modifying any `.proto` file, regenerate stubs:
 ```bash
-./scripts/gen_grpc.sh
+tox -e grpc
 ```
 Generated `*_pb2.py` and `*_pb2_grpc.py` files in `src/apme/v1/` are committed to the repo. Never edit them by hand.
 
@@ -552,8 +569,8 @@ Examples must be valid Ansible YAML — the integration test runner parses them.
 
 ### 8.2 Release Checklist
 
-- [ ] All unit tests pass (`pytest`)
-- [ ] All pre-commit checks pass (`prek run --all-files`)
+- [ ] All unit tests pass (`tox -e unit`)
+- [ ] All pre-commit checks pass (`tox -e lint`)
 - [ ] Security audit green (`gitleaks`, `bandit`, `pip-audit`)
 - [ ] `CHANGELOG.md` updated
 - [ ] Version bumped in `pyproject.toml`
@@ -575,11 +592,11 @@ This section compares APME's current practices against four industry frameworks:
 | Practice | APME Implementation | Framework |
 |----------|-------------------|-----------|
 | Secret scanning pre-commit | gitleaks, detect-secrets, bandit, detect-private-key | NIST SSDF PW, OpenSSF L1 |
-| Static analysis in CI | Ruff (lint + format), mypy strict, pydoclint via prek | NIST SSDF PW |
+| Static analysis in CI | Ruff (lint + format), mypy strict, pydoclint via tox/prek | NIST SSDF PW |
 | Vulnerability reporting process | SECURITY.md with private disclosure, response SLAs | OpenSSF L1 |
 | Dependency governance | ADR-019 two-tier model with 7-question checklist | NIST SSDF PS |
 | Container hardening | Non-root, pinned tags, no secrets in ENV, image scanning | OpenSSF L2 |
-| CI as thin wrapper | Actions pin to SHAs, local-reproducible steps (ADR-015) | SLSA Build L1, OpenSSF SCM |
+| CI as thin wrapper | Actions pin to SHAs, local-reproducible tox environments (ADR-015, ADR-047) | SLSA Build L1, OpenSSF SCM |
 | Spec-driven development | REQ → TASK → code with traceability | NIST SSDF PO |
 | Incident response documented | SECURITY.md "Incident Response" section | NIST SSDF RV |
 | License declared | Apache 2.0, documented in CONTRIBUTING.md | OpenSSF L1 |
@@ -643,11 +660,11 @@ updates:
 
 #### 9.2.4 SBOM Generation
 
-**Gap:** No Software Bill of Materials generated for releases. DR-002 (SBOM format) is deferred.
+**Gap:** Partially addressed. The Gateway now exposes a `GET /projects/{id}/sbom` endpoint that returns CycloneDX 1.5 JSON for scanned projects (collections and Python packages with license/supplier data). However, release-time SBOM generation for the APME tool itself (Python package and container images) is not yet automated. DR-002 (SBOM format) is deferred.
 
 **Industry reference:** NIST SSDF PS, OpenSSF Baseline L3, Executive Order 14028.
 
-**Recommendation:** Unblock DR-002 and add `syft` or `cyclonedx-bom` to the release pipeline. Generate SBOMs for both the Python package and container images.
+**Recommendation:** Add `syft` or `cyclonedx-bom` to the release pipeline to generate SBOMs for APME's own artifacts (Python wheel and container images), complementing the existing per-project SBOM endpoint.
 
 #### 9.2.5 Artifact Signing
 
@@ -738,7 +755,7 @@ updates:
 | CODEOWNERS | High | Low | OpenSSF L2 |
 | Signed commits | High | Low | OpenSSF L2, SLSA |
 | Dependabot config | High | Low | OpenSSF L2, NIST |
-| SBOM generation | High | Medium | NIST, OpenSSF L3 |
+| SBOM generation (release artifacts) | High | Medium | NIST, OpenSSF L3 |
 | Artifact signing | High | Medium | SLSA L2 |
 | CodeQL in CI | High | Low | NIST, OpenSSF |
 | Branch protection docs | High | Low | GitHub Hardening |
@@ -764,9 +781,11 @@ Start of session:
 
 Before every commit:
   1. Verify you are on a feature branch, NOT main
-  2. prek run --all-files      — lint, format, type check, docstrings
-  3. pytest                    — run tests
-  4. Review security checklist — no secrets, safe patterns
+  2. apme daemon stop           — stop stale daemon before testing
+  3. tox -e lint                — lint, format, type check, docstrings
+  4. tox -e unit                — run tests
+  5. apme daemon stop           — stop daemon after testing
+  6. Review security checklist  — no secrets, safe patterns
 
 Before every PR:
   1. Branch name matches artifacts
@@ -777,4 +796,4 @@ Before every PR:
 
 ---
 
-*Last updated: 2026-03-23*
+*Last updated: 2026-03-31*
