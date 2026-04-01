@@ -189,7 +189,6 @@ class ContentNode:
         line_end: Ending line in ``file_path`` (0 if unknown).
         name: Display name from YAML when present.
         module: Declared Ansible module name.
-        resolved_module_name: Fully resolved module FQCN when known.
         module_options: Raw module arguments from YAML.
         resolved_module_options: Normalized module arguments when known.
         options: Task/play options (when, tags, etc.).
@@ -237,7 +236,6 @@ class ContentNode:
     # Content extracted from YAML
     name: str | None = None
     module: str = ""
-    resolved_module_name: str = ""
     module_options: YAMLDict = field(default_factory=dict)
     resolved_module_options: YAMLDict = field(default_factory=dict)
     options: YAMLDict = field(default_factory=dict)
@@ -655,7 +653,6 @@ _CONTENT_NODE_SIMPLE_FIELDS: tuple[str, ...] = (
     "line_end",
     "name",
     "module",
-    "resolved_module_name",
     "module_options",
     "resolved_module_options",
     "options",
@@ -759,8 +756,10 @@ def _has_template(value: str) -> bool:
 class GraphBuilder:
     """Constructs a ``ContentGraph`` from ARI definitions.
 
-    Consumes the same ``root_definitions`` and ``ext_definitions`` dicts
-    that ``TreeLoader`` uses, so it can run in parallel for validation.
+    Consumes ``root_definitions`` and ``ext_definitions`` dicts produced
+    by the ARI parser.  After ``.build()`` completes, ``resolve_failures``
+    is populated with resolution bookkeeping.  ``extra_requirements`` is
+    reserved for future use and currently remains empty.
     """
 
     def __init__(
@@ -773,7 +772,7 @@ class GraphBuilder:
         """Create a builder for graph construction from ARI definition maps.
 
         Args:
-            root_definitions: Primary project definitions (same shape as ``TreeLoader``).
+            root_definitions: Primary project definitions from the ARI parser.
             ext_definitions: External/referenced definitions merged after roots.
             scan_root: Optional filesystem root for path normalization (reserved).
         """
@@ -784,11 +783,17 @@ class GraphBuilder:
         self._visited: set[str] = set()
         self._object_by_key: dict[str, object] = {}
 
+        self.extra_requirements: list[dict[str, object]] = []
+        self.resolve_failures: dict[str, dict[str, int]] = {
+            "module": {},
+            "role": {},
+            "taskfile": {},
+        }
+
     def build(self) -> ContentGraph:
         """Build and return the ContentGraph.
 
-        Builds a key-to-object lookup from all loaded definitions (mirroring
-        ``TreeLoader``'s resolution), then processes playbooks, roles, and
+        Builds a key-to-object lookup from all loaded definitions, then processes playbooks, roles, and
         taskfiles.  String keys in child lists (``Playbook.plays``,
         ``Play.tasks``, ``TaskFile.tasks``, etc.) are resolved through this
         lookup.
@@ -1243,9 +1248,6 @@ class GraphBuilder:
         delegate_to = delegate_raw if isinstance(delegate_raw, str) else None
 
         exec_type = getattr(task, "executable_type", None)
-        resolved_module = ""
-        if exec_type == ExecutableType.MODULE_TYPE:
-            resolved_module = getattr(task, "resolved_name", "") or ""
 
         node = ContentNode(
             identity=identity,
@@ -1254,7 +1256,6 @@ class GraphBuilder:
             line_end=line_end,
             name=getattr(task, "name", None),
             module=getattr(task, "module", "") or "",
-            resolved_module_name=resolved_module,
             module_options=module_options,
             options=options,
             variables=_safe_dict(getattr(task, "variables", {})),
@@ -1305,6 +1306,10 @@ class GraphBuilder:
                         conditional=node.when_expr is not None,
                         when_expr=str(node.when_expr) if node.when_expr else None,
                     )
+                else:
+                    self.resolve_failures["taskfile"][executable] = (
+                        self.resolve_failures["taskfile"].get(executable, 0) + 1
+                    )
             elif exec_type == ExecutableType.ROLE_TYPE:
                 is_import = getattr(task, "module", "") in ("ansible.builtin.import_role", "import_role")
                 edge_type = EdgeType.IMPORT if is_import else EdgeType.INCLUDE
@@ -1317,6 +1322,8 @@ class GraphBuilder:
                         dynamic=is_dynamic,
                         conditional=node.when_expr is not None,
                     )
+                else:
+                    self.resolve_failures["role"][executable] = self.resolve_failures["role"].get(executable, 0) + 1
 
         return nid
 
@@ -1346,14 +1353,8 @@ class GraphBuilder:
         identity = NodeIdentity(path=path_prefix, node_type=NodeType.HANDLER)
         nid = identity.path
 
-        from .models import ExecutableType as _ET
-
         line_start, line_end = _extract_lines(task)
         options = _safe_dict(getattr(task, "options", {}))
-
-        resolved_module = ""
-        if getattr(task, "executable_type", None) == _ET.MODULE_TYPE:
-            resolved_module = getattr(task, "resolved_name", "") or ""
 
         node = ContentNode(
             identity=identity,
@@ -1362,7 +1363,6 @@ class GraphBuilder:
             line_end=line_end,
             name=getattr(task, "name", None),
             module=getattr(task, "module", "") or "",
-            resolved_module_name=resolved_module,
             module_options=_safe_dict(getattr(task, "module_options", {})),
             options=options,
             notify=_as_str_list(options.get("notify")),
@@ -1739,7 +1739,7 @@ class GraphBuilder:
 
 
 # ---------------------------------------------------------------------------
-# Definition loading (inlined from tree.py to decouple GraphBuilder)
+# Definition loading
 # ---------------------------------------------------------------------------
 
 

@@ -82,9 +82,7 @@ src/apme_engine/
 ├── engine/                 ARI-based scanner
 │   ├── scanner.py          ARIScanner.evaluate() pipeline
 │   ├── parser.py           YAML/Ansible content parser
-│   ├── tree.py             TreeLoader (call graph construction)
 │   ├── models.py           SingleScan, TaskCall, RiskAnnotation, etc.
-│   ├── context.py          Scan/parse context wiring
 │   ├── findings.py         Finding/violation structures
 │   ├── content_graph.py    ContentGraph DAG model (ADR-044)
 │   ├── graph_scanner.py    GraphRule evaluation engine

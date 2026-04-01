@@ -514,7 +514,6 @@ class TestContentGraphSerialization:
             line_end=25,
             name="Deploy app",
             module="ansible.builtin.copy",
-            resolved_module_name="ansible.builtin.copy",
             module_options={"src": "/app", "dest": "/srv"},
             options={"when": "deploy_enabled"},
             variables={"app_version": "1.0"},
@@ -553,7 +552,6 @@ class TestContentGraphSerialization:
         assert rn.line_end == 25
         assert rn.name == "Deploy app"
         assert rn.module == "ansible.builtin.copy"
-        assert rn.resolved_module_name == "ansible.builtin.copy"
         assert rn.module_options == {"src": "/app", "dest": "/srv"}
         assert rn.options == {"when": "deploy_enabled"}
         assert rn.variables == {"app_version": "1.0"}
