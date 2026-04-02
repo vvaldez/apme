@@ -1,9 +1,7 @@
 # APME Agent Configurations
 
 This document defines the specialized agents used in APME development. It is the
-operational companion to `CLAUDE.md` (the project constitution). All agents must also
-follow [SOP.md](SOP.md), which consolidates security, workflow, code quality, CI, git,
-and release procedures into a single actionable reference. Read all three before
+operational companion to `CLAUDE.md` (the project constitution). Read both before
 touching code.
 
 **User-facing CLI (binary remains `apme`):** **`check`** for assessment, **`remediate`** for applying fixes. Both use the bidirectional `FixSession` RPC under the hood (ADR-039). The **Engine Agent** below owns the internal scan pipeline; that is not the same as the CLI subcommand name.
@@ -314,7 +312,6 @@ When transitioning between agents:
 
 2. **Receiving Agent**:
    - Read `CLAUDE.md` for project constitution
-   - Read `SOP.md` for consolidated operating procedures
    - Read this file's **Architectural Invariants** section
    - Read relevant REQ and TASK specs
    - Read relevant ADRs (linked from REQ and this file)
@@ -359,10 +356,13 @@ anything else**. If a matching skill exists, read it and follow its instructions
 | `/prd-import` | Import product requirements |
 | `/req-new` | Create requirement spec |
 | `/review-contributor-pr` | Review external contributor PRs |
+| `/rfe-capture` | Capture request for enhancement |
 | `/sdlc-status` | SDLC dashboard status |
+| `/security-scan` | Security scanning helpers |
 | `/submit-pr` | Create and submit pull requests |
 | `/task-new` | Create implementation task |
 | `/tox` | tox environment reference (lint, test, build, pod) |
+| `/branch-align` | Align branch name with SDLC artifacts |
 | `/workflow` | Development workflow guidance |
 
 ## Design Thinking
