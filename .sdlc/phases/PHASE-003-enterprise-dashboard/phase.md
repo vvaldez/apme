@@ -29,8 +29,13 @@ Enterprise Dashboard with ROI/Time-Saved reporting and Custom Policy engine. Sec
 | REQ | Name | Status |
 |-----|------|--------|
 | REQ-003 | Security & Compliance | Draft |
-| REQ-004 | Enterprise Integration | Draft |
+| REQ-004 | Enterprise Integration | In Progress |
 | REQ-008 | ROI Dashboard | Draft |
+| REQ-010 | Dependency Health Assessment | Draft |
+| REQ-011 | AA Deprecated Module Reporting | Draft |
+| REQ-012 | EDA Rulebook Validation | Draft |
+| REQ-013 | Extended OPA Policy Inputs | Draft |
+| REQ-014 | Policy Permissive Mode | Draft |
 
 ## Dependencies
 
