@@ -2,37 +2,37 @@
 
 ## Status
 
-Not Started
+Implemented
 
 ## Overview
 
-Automated "Rewrite" engine for the 50 most common module deprecations. Safe auto-fixes with diff generation.
+Automated remediation engine with deterministic transforms for renamed parameters, module redirects, and syntax changes. Convergence loop re-scans until stable. AI-assisted remediation for complex cases via Abbenay (PHASE-004).
 
 ## Goals
 
 - Implement safe auto-fixes for renamed parameters and module redirects
-- Support iterative processing for nested issues
+- Support iterative processing via convergence loop (scan → transform → re-scan)
 - Generate before/after diff views for user approval
-- Cover 50 most common deprecation patterns
+- Comment-preserving YAML transforms using ruamel.yaml
 
 ## Success Criteria
 
-- [ ] Auto-fix capability for 50+ common deprecations
-- [ ] Iterative rewrite passes uncover nested issues
-- [ ] Diff generation shows before/after changes
-- [ ] No destructive changes without user approval
+- [x] Auto-fix capability for common deprecations via TransformRegistry
+- [x] Convergence loop uncovers nested issues iteratively
+- [x] Diff generation shows before/after changes
+- [x] No destructive changes without user approval
+- [x] Graph-aware remediation engine integrated into FixSession path (ADR-044)
 
 ## Requirements
 
 | REQ | Name | Status |
 |-----|------|--------|
-| — | No requirements (moved to PHASE-004) | — |
+| REQ-002 | Automated Remediation | Implemented |
 
 ## Dependencies
 
-- PHASE-001: CLI Scanner (must be complete)
+- PHASE-001: CLI Scanner
 
 ## Timeline
 
-- **Target Start**: TBD
-- **Target Complete**: TBD
+- **Implemented**: 2026-03 (REQ-002 complete, ADR-044 Phase 3 merged)

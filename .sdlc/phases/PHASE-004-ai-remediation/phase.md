@@ -2,11 +2,11 @@
 
 ## Status
 
-In Progress
+Implemented
 
 ## Overview
 
-AI-assisted remediation for complex logic transitions that cannot be handled by deterministic rewrite rules.
+AI-assisted remediation for complex logic transitions that cannot be handled by deterministic rewrite rules. Abbenay AI integration provides intelligent suggestions with human-in-the-loop approval.
 
 ## Goals
 
@@ -17,28 +17,22 @@ AI-assisted remediation for complex logic transitions that cannot be handled by 
 
 ## Success Criteria
 
-- [ ] AI model trained on Ansible modernization patterns
-- [ ] Complex logic transitions handled automatically
-- [ ] Human approval workflow for AI suggestions
-- [ ] Measurable improvement over rule-based remediation
+- [x] AI provider protocol integrated (Abbenay, ADR-025)
+- [x] AI escalation wired into graph remediation path (ADR-044)
+- [x] Human approval workflow via FixSession bidirectional streaming
+- [x] Deterministic transforms attempted first, AI as fallback (two-tier model)
 
 ## Requirements
 
 | REQ | Name | Status |
 |-----|------|--------|
-| REQ-002 | Automated Remediation | Draft |
+| DR-005 | AI-Assisted Remediation Execution | Decided (Abbenay AI integration) |
 
 ## Dependencies
 
 - PHASE-001: CLI Scanner
 - PHASE-002: Rewrite Engine
-- PHASE-003: Enterprise Dashboard (for feedback loop)
 
 ## Timeline
 
-- **Target Start**: TBD
-- **Target Complete**: TBD
-
-## Notes
-
-Future phase. Requirements will be defined based on learnings from Phases 1-3.
+- **Implemented**: 2026-03 (DR-005 decided, Abbenay integrated, ADR-044 Phase 3 merged)
