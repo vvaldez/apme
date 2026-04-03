@@ -20,6 +20,7 @@ from apme.v1.primary_pb2 import (
     SessionCommand,
 )
 from apme_engine.cli._convert import violation_proto_to_dict
+from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
@@ -78,7 +79,7 @@ def _resolve_session_id(args: argparse.Namespace) -> str:
                 f"Error: --session value {explicit!r} is invalid. "
                 "Must contain only letters, digits, hyphens, and underscores.\n"
             )
-            raise SystemExit(2)
+            raise SystemExit(EXIT_ERROR)
         return explicit
     target: str = getattr(args, "target", ".")
     project_root = discover_project_root(target)
@@ -111,7 +112,7 @@ def run_check(args: argparse.Namespace) -> None:
         )
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     min_level = {0: 3, 1: 2}.get(verbosity, 1)
 
@@ -197,14 +198,14 @@ def run_check(args: argparse.Namespace) -> None:
 
     except grpc.RpcError as e:
         sys.stderr.write(f"Engine error: {e.details()}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
     finally:
         cmd_queue.put(None)
         channel.close()
 
     if not got_result:
         sys.stderr.write("Error: no session result received from engine\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     violations = deduplicate_violations(sort_violations(violations))
     scan_id = scan_id_holder[0]
@@ -231,6 +232,8 @@ def run_check(args: argparse.Namespace) -> None:
             "diffs": diffs,
         }
         print(json.dumps(out, indent=2))
+        if violations:
+            sys.exit(EXIT_VIOLATIONS)
         return
 
     show_diff = getattr(args, "diff", False)
@@ -244,3 +247,5 @@ def run_check(args: argparse.Namespace) -> None:
 
     display_summary = _ScanSummaryCompat(tier1_report)
     render_check_results(violations, scan_id=scan_id, scan_time_ms=None, summary=display_summary)
+    if violations:
+        sys.exit(EXIT_VIOLATIONS)

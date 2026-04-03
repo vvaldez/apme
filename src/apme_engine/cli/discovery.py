@@ -4,6 +4,7 @@ import sys
 
 import grpc
 
+from apme_engine.cli._exit_codes import EXIT_ERROR
 from apme_engine.daemon.launcher import ensure_daemon
 
 
@@ -26,7 +27,7 @@ def resolve_primary(args: object = None) -> tuple[grpc.Channel, str]:
     except RuntimeError as e:
         sys.stderr.write(f"Failed to connect to APME engine: {e}\n")
         sys.stderr.write("Try: apme daemon start\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
     _max_msg = 50 * 1024 * 1024
     return grpc.insecure_channel(
         addr,

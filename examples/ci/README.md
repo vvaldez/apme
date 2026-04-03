@@ -8,9 +8,9 @@ APME provides several CLI commands suitable for CI/CD:
 
 | Command | Purpose | Exit Code |
 |---------|---------|-----------|
-| `apme check .` | Scan for violations | 0 = pass, 1 = violations |
-| `apme format --check .` | Check YAML formatting | 0 = clean, 1 = changes needed |
-| `apme remediate .` | Auto-fix Tier 1 violations | 0 = success |
+| `apme check .` | Scan for violations | 0 = pass, 1 = violations, 2 = error |
+| `apme format --check .` | Check YAML formatting | 0 = clean, 1 = changes needed, 2 = error |
+| `apme remediate .` | Auto-fix Tier 1 violations | 0 = all fixed, 1 = remaining violations, 2 = error |
 
 ## Output Formats
 

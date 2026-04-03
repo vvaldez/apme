@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from apme_engine.cli._exit_codes import EXIT_ERROR
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = REPO_ROOT / "tests" / "integration" / "test_format_playbook.yml"
 
@@ -309,7 +311,7 @@ class TestRemediate:
 
         """
         r = _cli("remediate", str(messy_file))
-        assert r.returncode == 0
+        assert r.returncode != EXIT_ERROR, f"Remediate failed with error:\n{r.stderr[:2000]}"
         assert "updated" in r.stderr.lower() or "no changes" in r.stderr.lower()
 
     def test_file_is_formatted_after_remediate(self, messy_file: Path) -> None:
@@ -331,5 +333,5 @@ class TestRemediate:
 
         """
         r = _cli("remediate", str(messy_file))
-        assert r.returncode == 0
+        assert r.returncode != EXIT_ERROR, f"Remediate failed with error:\n{r.stderr[:2000]}"
         assert "remediation" in r.stderr.lower()

@@ -28,6 +28,7 @@ from apme.v1.primary_pb2 import (
     ScanChunk,
     SessionCommand,
 )
+from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
@@ -47,7 +48,7 @@ def run_remediate(args: argparse.Namespace) -> None:
     target = Path(args.target).resolve()
     if not target.exists():
         sys.stderr.write(f"Target not found: {args.target}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     explicit_session = getattr(args, "session", None)
     project_root = discover_project_root(target)
@@ -68,7 +69,7 @@ def run_remediate(args: argparse.Namespace) -> None:
         )
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     fix_opts = FixOptions(
         max_passes=getattr(args, "max_passes", 5),
@@ -196,13 +197,16 @@ def run_remediate(args: argparse.Namespace) -> None:
 
     except grpc.RpcError as e:
         sys.stderr.write(f"Engine error: {e.details()}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
     finally:
         cmd_queue.put(None)
         channel.close()
 
     if use_json:
         _emit_json(result_violations, result_patches, tier1_report)
+
+    if result_violations:
+        sys.exit(EXIT_VIOLATIONS)
 
 
 def _emit_json(

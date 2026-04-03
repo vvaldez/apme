@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         "check",
         parents=[global_opts],
         help="Check: format + remediate (dry-run) — shows what would change",
+        epilog="exit codes: 0 = no violations, 1 = violations found, 2 = error",
     )
     check_p.add_argument("target", nargs="?", default=".", help="Path to playbook, role, or project")
     check_p.add_argument("--diff", action="store_true", help="Show unified diffs of what remediate would change")
@@ -83,6 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         "remediate",
         parents=[global_opts],
         help="Remediate: format + auto-fix, writes changes to disk",
+        epilog="exit codes: 0 = all clean, 1 = remaining violations, 2 = error",
     )
     remediate_p.add_argument("target", nargs="?", default=".", help="Path to file or directory")
     remediate_p.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")

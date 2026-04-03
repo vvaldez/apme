@@ -8,6 +8,7 @@ bytes back) and output rendering.  All engine logic lives server-side.
 
 import sys
 
+from apme_engine.cli._exit_codes import EXIT_ERROR
 from apme_engine.cli.parser import build_parser
 
 
@@ -51,7 +52,7 @@ def main() -> None:
         run_sbom(args)
     else:
         parser.print_help()
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
 
 if __name__ == "__main__":

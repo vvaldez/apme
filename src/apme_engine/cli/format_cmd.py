@@ -9,6 +9,7 @@ from pathlib import Path
 import grpc
 
 from apme.v1 import primary_pb2_grpc
+from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
 from apme_engine.cli.discovery import resolve_primary
 from apme_engine.cli.output import render_logs
@@ -24,7 +25,7 @@ def run_format(args: argparse.Namespace) -> None:
     target = Path(args.target).resolve()
     if not target.exists():
         sys.stderr.write(f"Target not found: {args.target}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     explicit_session = getattr(args, "session", None)
     if explicit_session:
@@ -37,7 +38,7 @@ def run_format(args: argparse.Namespace) -> None:
         chunks = yield_scan_chunks(str(target), project_root_name="project", session_id=session_id)
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     channel, _ = resolve_primary(args)
     stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
@@ -45,7 +46,7 @@ def run_format(args: argparse.Namespace) -> None:
         resp = stub.FormatStream(chunks, timeout=120)
     except grpc.RpcError as e:
         sys.stderr.write(f"Engine error: {e.details()}\n")
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
     finally:
         channel.close()
 
@@ -63,7 +64,7 @@ def run_format(args: argparse.Namespace) -> None:
         for d in diffs:
             sys.stderr.write(f"Would reformat: {d.path}\n")
         sys.stderr.write(f"\n{len(diffs)} file(s) would be reformatted.\n")
-        sys.exit(1)
+        sys.exit(EXIT_VIOLATIONS)
 
     if args.apply:
         for d in diffs:

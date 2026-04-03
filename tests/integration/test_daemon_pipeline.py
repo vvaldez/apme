@@ -26,6 +26,7 @@ from typing import cast
 
 import pytest
 
+from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.engine.models import ViolationDict, YAMLDict
 
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "terrible-playbook"
@@ -60,7 +61,9 @@ def _scan_json(fixture_dir: Path) -> tuple[YAMLDict, str]:
         text=True,
         timeout=300,
     )
-    assert r.returncode == 0, f"Scan exited {r.returncode}:\nstdout: {r.stdout[:2000]}\nstderr: {r.stderr[:4000]}"
+    assert r.returncode != EXIT_ERROR, (
+        f"Scan exited {r.returncode}:\nstdout: {r.stdout[:2000]}\nstderr: {r.stderr[:4000]}"
+    )
     try:
         return cast(YAMLDict, json.loads(r.stdout)), r.stderr
     except json.JSONDecodeError:
@@ -159,8 +162,8 @@ def test_milestone_logs_displayed(scan_verbose: subprocess.CompletedProcess[str]
     Args:
         scan_verbose: Completed scan process with -v output.
     """
-    assert scan_verbose.returncode == 0, (
-        f"Check exited {scan_verbose.returncode}:\n"
+    assert scan_verbose.returncode in (0, EXIT_VIOLATIONS), (
+        f"Check exited {scan_verbose.returncode} (expected 0 or 1):\n"
         f"stdout: {scan_verbose.stdout[:2000]}\n"
         f"stderr: {scan_verbose.stderr[:2000]}"
     )
@@ -241,7 +244,9 @@ def _remediate_json(fixture_dir: Path) -> YAMLDict:
         text=True,
         timeout=300,
     )
-    assert r.returncode == 0, f"Remediate exited {r.returncode}:\nstdout: {r.stdout[:2000]}\nstderr: {r.stderr[:4000]}"
+    assert r.returncode != EXIT_ERROR, (
+        f"Remediate exited {r.returncode}:\nstdout: {r.stdout[:2000]}\nstderr: {r.stderr[:4000]}"
+    )
     try:
         return cast(YAMLDict, json.loads(r.stdout))
     except json.JSONDecodeError:
