@@ -24,9 +24,9 @@ AI-assisted remediation for complex logic transitions that cannot be handled by 
 
 ## Requirements
 
-| ID | Name | Status |
-|----|------|--------|
-| DR-005 | AI-Assisted Remediation Approach | Decided (Abbenay AI integration) |
+| REQ | Name | Status |
+|-----|------|--------|
+| DR-005 | AI-Assisted Remediation Execution | Decided (Abbenay AI integration) |
 
 ## Dependencies
 
