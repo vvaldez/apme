@@ -379,37 +379,6 @@ class TestSessionStoreReaper:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildProposals:
-    """Unit tests for _build_proposals_from_ai."""
-
-    def test_converts_ai_proposals_to_protos(self) -> None:
-        """AIProposal with snippets become Proposal protos."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.remediation.ai_provider import AIProposal
-
-        ai_proposals = [
-            AIProposal(
-                file="a.yml",
-                original_snippet="line2\n",
-                fixed_snippet="fixed2\n",
-                diff="@@ -2 +2 @@\n-line2\n+fixed2",
-                rule_ids=["L001"],
-                confidence=0.95,
-                explanation="Fixed line 2",
-            ),
-        ]
-        proposals = PrimaryServicer._build_proposals_from_ai(ai_proposals)
-
-        assert len(proposals) == 1
-        assert proposals[0].id == "t2-0000"
-        assert proposals[0].file == "a.yml"
-        assert proposals[0].rule_id == "L001"
-        assert proposals[0].before_text == "line2\n"
-        assert proposals[0].after_text == "fixed2\n"
-        assert proposals[0].confidence == pytest.approx(0.95)
-        assert proposals[0].tier == 2
-
-
 class TestSessionApplyApproved:
     """Unit tests for _session_apply_approved."""
 

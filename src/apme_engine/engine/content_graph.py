@@ -721,19 +721,30 @@ class ContentGraph:
 
     # -- Approval tracking (ADR-044 Phase 3) --------------------------------
 
-    def approve_pending(self, node_id: str | None = None) -> int:
-        """Approve all pending progression entries.
+    def approve_pending(
+        self,
+        node_id: str | None = None,
+        *,
+        source_filter: str | None = None,
+    ) -> int:
+        """Approve pending progression entries.
 
         When ``node_id`` is given, only that node's entries are approved.
-        When ``None``, all pending entries across the entire graph are
-        approved.  This is the dedicated function called after Tier 1
-        convergence to auto-approve deterministic transforms.
+        When ``None``, entries across the entire graph are approved.
+
+        When ``source_filter`` is set (e.g., ``"deterministic"``), only
+        entries whose ``source`` matches the filter **or** whose
+        ``source`` is empty (scan entries, initial state) are approved.
+        This auto-approves Tier 1 transforms and their associated scan
+        snapshots while leaving ``source="ai"`` entries pending.
 
         Since ``NodeState`` is frozen, each pending entry is replaced
         with a copy that has ``approved=True``.
 
         Args:
             node_id: Optional node to scope approval to.
+            source_filter: When set, skip entries whose non-empty
+                ``source`` differs from this value.
 
         Returns:
             Number of entries approved.
@@ -744,9 +755,12 @@ class ContentGraph:
             if node is None:
                 continue
             for i, entry in enumerate(node.progression):
-                if not entry.approved:
-                    node.progression[i] = replace(entry, approved=True)
-                    count += 1
+                if entry.approved:
+                    continue
+                if source_filter is not None and entry.source and entry.source != source_filter:
+                    continue
+                node.progression[i] = replace(entry, approved=True)
+                count += 1
             if node.progression:
                 node.state = node.progression[-1]
         return count

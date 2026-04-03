@@ -144,6 +144,12 @@ gh pr create --repo upstream-owner/repo --title "conventional commit style title
 ## Changes
 - List of notable changes
 
+## Quality of life
+- List any non-functional improvements bundled in this PR: skill updates,
+  workflow fixes, SDLC artifact changes, rule/template tweaks, documentation
+  for contributor experience, etc.
+- Omit this section entirely if there are none.
+
 ## Test plan
 - [ ] `tox -e lint` passes
 - [ ] `tox -e unit` passes
@@ -154,6 +160,21 @@ EOF
 ```
 
 The PR targets upstream's `main` branch from the fork. Return the PR URL to the user.
+
+### Including non-code changes (Quality of life)
+
+PRs often include changes that are not directly part of the feature or fix but
+improve the development workflow: skill updates, SDLC template tweaks, rule
+improvements, documentation for contributor experience, or process fixes.
+
+These changes belong in the **Quality of life** section of the PR body. Use
+this section whenever the PR touches files like `.agents/skills/`, `.sdlc/`,
+`CLAUDE.md`, `AGENTS.md`, `SOP.md`, `CONTRIBUTING.md`, or similar workflow
+artifacts. This makes it easy for reviewers to separate functional changes
+from process improvements.
+
+If a PR contains **only** quality-of-life changes (no production code), use
+`chore` or `docs` as the commit type.
 
 ### Maintaining the PR
 

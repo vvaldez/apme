@@ -109,6 +109,34 @@ When you push fixes that address a review comment, reply on that thread so
 the resolution is visible. Follow the **`pr-review`** skill for the full
 procedure (REST reply endpoint, finding comment IDs, GraphQL thread resolution).
 
+### 5b. Track all deferred work as issues
+
+When reviewing a contributor PR, any suggestion that work should happen in a
+follow-up PR — whether from you, the contributor, or another reviewer — **MUST**
+be captured as a GitHub issue immediately. Do not leave "TODO for later" or
+"out of scope, will address separately" without creating an issue. Untracked
+follow-ups are invisible debt.
+
+```bash
+gh issue create --repo ansible/apme \
+  --title "<type>(scope): <description from review>" \
+  --body "$(cat <<'EOF'
+## Context
+
+<What was deferred and why>
+
+Flagged during review of PR #N: <link to comment>
+
+## Proposal
+
+<What should be done>
+
+EOF
+)"
+```
+
+Include the issue URL in the PR comment thread so reviewers can verify tracking.
+
 ### 6. What not to include in the skill
 
 - **Local-only or environment-specific issues** (e.g. commit signing, SSH

@@ -173,62 +173,53 @@ class RuleMetadata:
 ### Design
 
 ```python
-from typing import Callable, NamedTuple
+from collections.abc import Callable
+from ruamel.yaml.comments import CommentedMap
 
-class TransformResult(NamedTuple):
-    content: str        # modified file content
-    applied: bool       # True if a change was made
-
-TransformFn = Callable[[str, dict], TransformResult]
-# TransformFn(file_content: str, violation: dict) -> TransformResult
-
+NodeTransformFn = Callable[[CommentedMap, dict], bool]
 
 class TransformRegistry:
-    """Maps rule IDs to deterministic fix functions."""
+    """Maps rule IDs to node-level transform functions."""
 
     def __init__(self):
-        self._transforms: dict[str, TransformFn] = {}
+        self._node: dict[str, NodeTransformFn] = {}
 
-    def register(self, rule_id: str, fn: TransformFn) -> None:
-        self._transforms[rule_id] = fn
+    def register(self, rule_id: str, *, node: NodeTransformFn) -> None:
+        self._node[rule_id] = node
 
     def __contains__(self, rule_id: str) -> bool:
-        return rule_id in self._transforms
+        return rule_id in self._node
 
-    def apply(self, rule_id: str, content: str, violation: dict) -> TransformResult:
-        fn = self._transforms.get(rule_id)
-        if fn is None:
-            return TransformResult(content=content, applied=False)
-        return fn(content, violation)
+    def apply_node(self, rule_id: str, task: CommentedMap, violation: dict) -> bool:
+        nfn = self._node.get(rule_id)
+        if nfn is None:
+            return False
+        return nfn(task, violation)
 ```
 
 ### Transform Implementation Rules
 
-1. **Operate on YAML AST** — use `FormattedYAML` (ruamel round-trip) to preserve comments and formatting
+1. **Operate on CommentedMap** — transforms receive a ruamel round-trip task mapping; modify in-place, return `True` if changed
 2. **Single responsibility** — one transform per rule ID; a transform fixes exactly the issue its rule detects
 3. **Idempotent** — applying a transform to already-fixed content produces no change
 4. **Independently testable** — each transform has its own unit test with before/after YAML strings
-5. **No side effects** — transforms receive content + violation, return content; they do not write files
+5. **No side effects** — transforms modify the task CommentedMap in-place; they do not write files
 
 ### Example Transform
 
 ```python
-def fix_missing_mode(content: str, violation: dict) -> TransformResult:
+def fix_missing_mode(task: CommentedMap, violation: dict) -> bool:
     """L021: add mode: '0644' to file/copy/template tasks missing explicit mode."""
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-    data = yaml.load(content)
+    module_key = get_module_key(task)
+    if module_key is None:
+        return False
 
-    # Navigate to the task identified by the violation
-    task = _find_task_at_line(data, violation.get("line", 0))
-    if task is None:
-        return TransformResult(content=content, applied=False)
+    module_args = task.get(module_key)
+    if isinstance(module_args, dict) and "mode" not in module_args:
+        module_args["mode"] = "0644"
+        return True
 
-    module_key = _get_module_key(task)
-    if module_key and "mode" not in task[module_key]:
-        task[module_key]["mode"] = "0644"
-        return TransformResult(content=yaml.dumps(data), applied=True)
-
-    return TransformResult(content=content, applied=False)
+    return False
 ```
 
 ### File Organization
@@ -236,17 +227,15 @@ def fix_missing_mode(content: str, violation: dict) -> TransformResult:
 ```
 src/apme_engine/remediation/
   ├── __init__.py
-  ├── engine.py              # RemediationEngine class (convergence loop)
-  ├── partition.py            # is_finding_resolvable(), classify_violation()
-  ├── registry.py             # TransformRegistry
-  ├── ai_provider.py          # AIProvider Protocol, AIProposal dataclass
-  ├── abbenay_provider.py     # AbbenayProvider (default AI impl via abbenay_grpc)
-  ├── enrich.py               # Enrich violations/context for remediation
-  ├── structured.py           # Structured remediation payloads
-  ├── unit_segmenter.py       # Split content into task snippets for AI
+  ├── graph_engine.py          # GraphRemediationEngine (graph-aware convergence)
+  ├── partition.py              # is_finding_resolvable(), classify_violation()
+  ├── registry.py               # TransformRegistry (node transforms only)
+  ├── ai_provider.py            # AIProvider protocol, AINodeFix, AINodeContext
+  ├── ai_context.py             # AINodeContext builder from ContentGraph
+  ├── abbenay_provider.py       # AbbenayProvider (Abbenay gRPC AI backend)
   └── transforms/
-      ├── __init__.py          # auto-registers all transforms
-      ├── _helpers.py          # Shared transform helpers
+      ├── __init__.py            # auto-registers all transforms
+      ├── _helpers.py            # Shared transform helpers
       ├── L007_shell_to_command.py
       ├── L021_missing_mode.py
       ├── M001_fqcn.py
@@ -259,21 +248,21 @@ When `is_finding_resolvable()` returns `False` and an AIProvider is available (v
 
 ### Unit Decomposition
 
-Files are segmented into **fixable units** (individual tasks or blocks) using the `NodeIndex` built during scanning. Each unit with violations is sent to the LLM independently. This provides:
+AI remediation operates on individual **graph nodes** from the `ContentGraph`. Each node with unresolved violations (after Tier 1 deterministic transforms) is sent to the LLM as an `AINodeContext` containing the node's YAML, its violations, parent context, and best-practice guidance. This provides:
 
-- **Focused context** — the LLM sees only the relevant task/block, not the full file
-- **Independent proposals** — each unit fix is a separate proposal the user can approve/reject
-- **No line-number dependency** — the LLM returns corrected YAML, we handle reassembly
+- **Focused context** — the LLM sees only the relevant task/block and its parent context, not the full file
+- **Independent proposals** — each node fix is a separate `AINodeFix` the user can approve/reject via `approve_pending(source_filter="ai")`
+- **No line-number dependency** — the LLM returns corrected YAML content, the graph engine handles state tracking
 
-Violations that don't map to any unit (e.g., play-level issues) are marked `MANUAL` for human review.
+Violations on non-task nodes (e.g., play-level scope) are marked `MANUAL` for human review.
 
 ### Prompt Contract
 
-The LLM receives the unit's YAML snippet and its violations. It returns the complete corrected YAML — no line numbers, no partial diffs:
+The LLM receives the node's YAML and violations via `AINodeContext`. It returns an `AINodeFix`:
 
 ```json
 {
-  "fixed_snippet": "<entire corrected YAML for the unit>",
+  "fixed_snippet": "<the entire corrected YAML for this task/block>",
   "changes": [
     {"rule_id": "L024", "explanation": "Added task name", "confidence": 0.95}
   ],
@@ -283,9 +272,9 @@ The LLM receives the unit's YAML snippet and its violations. It returns the comp
 }
 ```
 
-### Content-Based Application
+### Graph-Native Application
 
-Each `AIProposal` carries `original_snippet` and `fixed_snippet`. Application uses string replacement rather than line-number indexing. This makes proposals safe to apply in any order **as long as each `original_snippet` is unique within the file** — applying one unit's fix cannot invalidate another's because units are located by content, not position. When identical snippets appear multiple times in the same file, the engine detects the ambiguity and skips those units rather than risking a wrong-location replacement.
+AI fixes are applied through `ContentGraph.apply_ai_fix()`, which updates the node's content and records a `NodeState` with `source="ai"`. The graph engine tracks content hashes to detect changes and re-validates. AI proposals use the same approval semantics as deterministic transforms — they appear as pending proposals with `source="ai"` and can be selectively approved.
 
 ### CLI Modes
 
@@ -370,19 +359,19 @@ class FixReport:
 
 ## Progress Streaming
 
-`RemediationEngine.remediate()` runs synchronously inside a thread-pool executor, which blocks the `_session_process` async generator from yielding events. Without explicit progress plumbing, the gRPC stream (and downstream WebSocket) goes silent for the entire remediation duration — often minutes for large projects with AI escalation.
+`GraphRemediationEngine.remediate()` runs inside the async event loop via `run_in_executor()` for blocking graph operations. Without explicit progress plumbing, the gRPC stream (and downstream WebSocket) goes silent for the entire remediation duration — often minutes for large projects with AI escalation.
 
 Three layers ensure continuous feedback:
 
 ### ProgressCallback
 
-A `Callable[[str, str, float], None]` (`phase`, `message`, `fraction`) is threaded into both `RemediationEngine` and `_scan_pipeline`. Each component calls back at key milestones:
+A `Callable[[str, str, float], None]` (`phase`, `message`, `fraction`) is threaded into `GraphRemediationEngine` and `_scan_pipeline`. Each component calls back at key milestones:
 
 | Source | Phase | Example messages |
 |--------|-------|-----------------|
 | `_scan_pipeline` | `scan` | `Dispatching to 4 validators...`, `Gitleaks: 0 findings` |
-| `RemediationEngine` | `tier1` | `Pass 1/5: scanning...`, `Pass 1: 113 transforms applied` |
-| `RemediationEngine` | `ai` | `AI: site.yml — 42 unit(s)`, `AI: site.yml unit 12/42` |
+| `GraphRemediationEngine` | `tier1` | `Pass 1/5: scanning...`, `Pass 1: 113 transforms applied` |
+| `GraphRemediationEngine` | `ai` | `AI: node pb:site.yml#play:0#task:1`, `AI: 12/42 nodes` |
 
 ### Thread-safe Queue and Drain Loop
 

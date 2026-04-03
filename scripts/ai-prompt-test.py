@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Test AI prompt/response directly against Abbenay.
 
-Builds a unit prompt for a sample unit from site.yml and sends it
-to the Abbenay daemon, printing the full response for debugging.
+Builds a node prompt for a sample task node and sends it to the
+Abbenay daemon, printing the full response for debugging.
 """
 
 from __future__ import annotations
@@ -15,15 +15,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from apme_engine.remediation.abbenay_provider import (  # noqa: E402
-    _build_unit_prompt,
+    _build_node_prompt,
     _extract_json_object,
-    _parse_unit_response,
+    _parse_node_response,
     discover_abbenay,
 )
+from apme_engine.remediation.ai_context import AINodeContext  # noqa: E402
 
-SAMPLE_SNIPPET = """\
-    - name: get the hostname
-      shell: hostname
+SAMPLE_YAML = """\
+- name: get the hostname
+  shell: hostname
 """
 
 SAMPLE_VIOLATIONS: list[dict[str, str | int | list[int] | bool | None]] = [
@@ -46,7 +47,7 @@ SAMPLE_VIOLATIONS: list[dict[str, str | int | list[int] | bool | None]] = [
 
 
 async def test_prompt(model: str) -> None:
-    """Send a unit prompt to Abbenay and print results.
+    """Send a node prompt to Abbenay and print results.
 
     Args:
         model: LLM model identifier (e.g. ``openrouter/anthropic/claude-sonnet-4``).
@@ -66,13 +67,15 @@ async def test_prompt(model: str) -> None:
         client = AbbenayClient(socket_path=addr.removeprefix("unix://"))
     await client.connect()
 
-    prompt = _build_unit_prompt(
-        SAMPLE_VIOLATIONS,
-        SAMPLE_SNIPPET,
+    context = AINodeContext(
+        node_id="task:site.yml#play:0#task:0",
+        node_type="taskcall",
+        yaml_lines=SAMPLE_YAML,
+        violations=SAMPLE_VIOLATIONS,
         file_path="site.yml",
-        line_start=23,
-        line_end=24,
     )
+
+    prompt = _build_node_prompt(context)
     print("=" * 60)
     print("PROMPT:")
     print("=" * 60)
@@ -105,15 +108,18 @@ async def test_prompt(model: str) -> None:
         print("\nPARSED JSON:")
         print(json.dumps(data, indent=2))
 
-        patches, skipped = _parse_unit_response(response_text, SAMPLE_SNIPPET, 23, 24)
-        print(f"\nPatches: {len(patches) if patches else 0}")
-        print(f"Skipped: {len(skipped)}")
-        if patches:
-            for p in patches:
-                print(f"  [{p.rule_id}] L{p.line_start}-{p.line_end}: {p.explanation}")
-        if skipped:
-            for s in skipped:
-                print(f"  SKIP [{s.rule_id}] L{s.line}: {s.reason}")
+        fix = _parse_node_response(response_text, SAMPLE_YAML)
+        if fix:
+            print(f"\nFix: {fix.explanation}")
+            print(f"  Rule IDs: {fix.rule_ids}")
+            print(f"  Confidence: {fix.confidence}")
+            if fix.fixed_snippet:
+                print(f"  Fixed snippet:\n{fix.fixed_snippet}")
+            if fix.skipped:
+                for s in fix.skipped:
+                    print(f"  SKIP [{s.rule_id}] L{s.line}: {s.reason}")
+        else:
+            print("\nNo fix generated")
     else:
         print("\nFailed to extract JSON!")
 

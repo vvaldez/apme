@@ -39,6 +39,40 @@ disputed threads block merge.
 - After pushing fixes, update the PR description to reflect the expanded scope
   (per the pr-new skill).
 
+### Deferred work MUST be tracked
+
+Any time a review response includes language like "follow-up PR", "subsequent
+PR", "leaving as a follow-up", "future enhancement", "out of scope for this
+PR", or "logging this for later" — you **MUST** create a GitHub issue
+immediately using `gh issue create`. Do not reply to the comment without also
+creating the issue. Include the issue URL in your reply so the reviewer can
+verify tracking.
+
+Untracked follow-ups are invisible debt. If it is worth mentioning, it is
+worth an issue.
+
+```bash
+# Create a follow-up issue and capture the URL
+gh issue create --repo ansible/apme \
+  --title "<type>(scope): <brief description>" \
+  --body "$(cat <<'EOF'
+## Context
+
+<What was the review comment and why it wasn't addressed in this PR>
+
+Flagged in: <link to PR comment thread>
+
+## Proposal
+
+<What should be done>
+
+## References
+
+- PR #N
+EOF
+)"
+```
+
 ## Copilot review patterns
 
 Copilot automated reviews surface recurring categories. Address these

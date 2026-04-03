@@ -34,25 +34,25 @@ The design prioritizes:
   +----------------------------------------------------------------+
   |                                                                  |
   |  +----------------------------------------------------------+  |
-  |  |          RemediationEngine                                |  |
+  |  |          GraphRemediationEngine                           |  |
   |  |                                                            |  |
-  |  |  Phase 1: Tier 1 convergence loop                         |  |
-  |  |    check (internal scan) -> partition -> transform ->     |  |
-  |  |    re-check (existing, unchanged)                         |  |
+  |  |  Phase 1: Tier 1 convergence loop (graph-aware)           |  |
+  |  |    scan -> partition -> apply_transform (per node) ->     |  |
+  |  |    re-scan (NodeState tracking, content hashes)           |  |
   |  |                                                            |  |
-  |  |  Phase 2: Tier 2 AI escalation                            |  |
-  |  |    for each remaining_ai violation:                       |  |
-  |  |      build prompt                                         |  |
-  |  |      -> AIProvider.propose_fix()                          |  |
-  |  |      -> re-validate (check snippet / internal scan)        |  |
-  |  |      -> hybrid cleanup (Tier 1 transforms)                |  |
-  |  |      -> yield proposal to CLI                             |  |
+  |  |  Phase 2: Tier 2 AI escalation (graph-native)             |  |
+  |  |    for each remaining_ai node:                            |  |
+  |  |      build AINodeContext from ContentGraph                |  |
+  |  |      -> AIProvider.propose_node_fix()                     |  |
+  |  |      -> apply_ai_fix() on ContentGraph                   |  |
+  |  |      -> re-validate via rescan_fn                         |  |
+  |  |      -> yield proposal (source="ai") to CLI              |  |
   |  +----------------------------------------------------------+  |
   |                                                                  |
   |  +-----------------+     +--------------------+                 |
   |  | AIProvider      |     | Best Practices     |                 |
   |  | Protocol        |     | Mapping (YAML)     |                 |
-  |  | propose_fix()   |     +--------------------+                 |
+  |  | propose_node_fix|     +--------------------+                 |
   |  +--------+--------+                                             |
   |           |                                                      |
   |  +--------v--------+                                             |
@@ -649,11 +649,12 @@ Note: the Abbenay container's `CMD` sets `--grpc-host 0.0.0.0` so published port
 ```
 src/apme_engine/remediation/
   +-- __init__.py
-  +-- engine.py              # RemediationEngine (Tier 1 loop + Tier 2 escalation)
-  +-- partition.py            # is_finding_resolvable(), classify_violation()
-  +-- registry.py             # TransformRegistry
-  +-- ai_provider.py          # AIProvider Protocol, AIProposal dataclass
-  +-- abbenay_provider.py     # AbbenayProvider, discover_abbenay(), preflight
+  +-- graph_engine.py          # GraphRemediationEngine (graph-aware convergence + AI)
+  +-- partition.py              # is_finding_resolvable(), classify_violation()
+  +-- registry.py               # TransformRegistry (node transforms only)
+  +-- ai_provider.py            # AIProvider protocol, AINodeFix, AINodeContext
+  +-- ai_context.py             # AINodeContext builder from ContentGraph
+  +-- abbenay_provider.py       # AbbenayProvider, discover_abbenay(), preflight
   +-- transforms/
       +-- ...
 

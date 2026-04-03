@@ -1,66 +1,66 @@
 """L020: Convert numeric file mode to quoted string with leading zero.
 
-Uses line-level string matching rather than AST to correctly handle YAML 1.1
-octal ambiguity (``0644`` → int 420 vs ``644`` → int 644).
+Handles three forms that the YAML parser produces:
+
+- ``mode: 0644`` → YAML 1.1 octal → OctalIntYAML11(420) → ``"0644"``
+- ``mode: 644``  → int(644), all digits are valid octal → ``"0644"``
+- ``mode: "644"`` → str without leading zero → ``"0644"``
 """
 
 from __future__ import annotations
 
 import re
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
+from apme_engine.engine.yaml_utils import OctalIntYAML11
+from apme_engine.remediation.transforms._helpers import get_module_key
 
-_MODE_NUMERIC = re.compile(
-    r"^(\s+mode:\s+)"
-    r"(0[0-7]{3,4}|[0-7]{3,4})"
-    r"(\s*(?:#.*)?)$",
-)
-
-_MODE_QUOTED_NO_ZERO = re.compile(
-    r'^(\s+mode:\s+)(["\'])([0-7]{3,4})\2(\s*(?:#.*)?)$',
-)
+_OCTAL_DIGITS = re.compile(r"^[0-7]{3,4}$")
 
 
-def fix_octal_mode(content: str, violation: ViolationDict) -> TransformResult:
-    """Convert ``mode: 644`` or ``mode: 0644`` to ``mode: "0644"``.
+def fix_octal_mode(task: CommentedMap, violation: ViolationDict) -> bool:
+    """Ensure ``mode`` is a quoted octal string with a leading zero.
 
     Args:
-        content: YAML file content.
-        violation: Violation dict with line.
+        task: Task CommentedMap to modify in-place.
+        violation: Violation dict for context.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    target_line = violation_line_to_int(violation)
+    module_key = get_module_key(task)
+    if module_key is None:
+        return False
 
-    lines = content.splitlines(keepends=True)
-    applied = False
+    module_args = task.get(module_key)
+    if isinstance(module_args, dict) and "mode" in module_args:
+        container = module_args
+    elif "mode" in task:
+        container = task
+    else:
+        return False
 
-    for i, line in enumerate(lines):
-        if i + 1 < target_line - 5 or i + 1 > target_line + 20:
-            continue
-        stripped = line.rstrip("\n")
-        nl = "\n" if line.endswith("\n") else ""
+    mode_val = container["mode"]
 
-        m = _MODE_NUMERIC.match(stripped)
-        if m:
-            prefix, digits, suffix = m.group(1), m.group(2), m.group(3) or ""
-            quoted = f'"{digits}"' if digits.startswith("0") and len(digits) >= 4 else f'"0{digits}"'
-            lines[i] = prefix + quoted + suffix + nl
-            applied = True
-            break
+    if isinstance(mode_val, str):
+        stripped = mode_val.strip()
+        if _OCTAL_DIGITS.match(stripped) and not stripped.startswith("0"):
+            container["mode"] = f"0{stripped}"
+            return True
+        return False
 
-        m2 = _MODE_QUOTED_NO_ZERO.match(stripped)
-        if m2:
-            prefix, quote, digits, suffix = m2.group(1), m2.group(2), m2.group(3), m2.group(4) or ""
-            if not digits.startswith("0"):
-                lines[i] = f"{prefix}{quote}0{digits}{quote}{suffix}{nl}"
-                applied = True
-                break
+    if isinstance(mode_val, int):
+        if isinstance(mode_val, OctalIntYAML11):
+            octal_digits = format(int(mode_val), "o")
+            normalized = octal_digits if octal_digits.startswith("0") else f"0{octal_digits}"
+        else:
+            decimal_digits = str(mode_val)
+            if not _OCTAL_DIGITS.match(decimal_digits):
+                return False
+            normalized = f"0{decimal_digits}" if not decimal_digits.startswith("0") else decimal_digits
+        container["mode"] = normalized
+        return True
 
-    if not applied:
-        return TransformResult(content=content, applied=False)
-
-    return TransformResult(content="".join(lines), applied=True)
+    return False

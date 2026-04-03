@@ -670,9 +670,7 @@ class TestRegistryNodeTransform:
 
         reg = TransformRegistry()
         reg.register("A001", node=lambda t, v: True)
-        from apme_engine.remediation.registry import TransformResult
-
-        reg.register("B001", fn=lambda c, v: TransformResult("", False))
+        reg.register("B001", node=lambda t, v: False)
         assert "A001" in reg.rule_ids
         assert "B001" in reg.rule_ids
         assert len(reg) == 2

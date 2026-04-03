@@ -1,14 +1,13 @@
-"""Tests for the remediation engine: registry, partition, transforms, convergence."""
+"""Tests for the remediation engine: registry, partition, transforms."""
 
 import textwrap
 from collections.abc import Callable
-from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 from ruamel.yaml.comments import CommentedMap
 
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
-from apme_engine.remediation.engine import RemediationEngine
+from apme_engine.engine.yaml_utils import FormattedYAML
 from apme_engine.remediation.partition import (
     add_classification_to_violations,
     classify_violation,
@@ -18,10 +17,10 @@ from apme_engine.remediation.partition import (
     normalize_rule_id,
     partition_violations,
 )
-from apme_engine.remediation.registry import TransformRegistry, TransformResult
-from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.registry import TransformRegistry
 from apme_engine.remediation.transforms import build_default_registry
 from apme_engine.remediation.transforms._helpers import (
+    find_task_at_line,
     find_task_by_index,
     violation_line_to_int,
     violation_task_index,
@@ -46,34 +45,24 @@ from apme_engine.remediation.transforms.M008_bare_include import fix_bare_includ
 from apme_engine.remediation.transforms.M009_with_to_loop import fix_with_to_loop
 
 
-def _apply(
-    fn: Callable[[StructuredFile, ViolationDict], bool],
-    content: str,
-    violation: ViolationDict,
-) -> TransformResult:
-    """Adapter: call a structured transform using the old (content, violation) interface.
+class _ApplyResult(NamedTuple):
+    """Result of applying a transform in tests.
 
-    Args:
-        fn: Structured transform function.
-        content: YAML file content string.
-        violation: Violation dict.
-
-    Returns:
-        TransformResult with serialized content and applied flag.
+    Attributes:
+        content: File content (possibly modified).
+        applied: True if the transform made a change.
     """
-    sf = StructuredFile.from_content("test.yml", content)
-    if sf is None:
-        return TransformResult(content, False)
-    applied = fn(sf, violation)
-    return TransformResult(sf.serialize() if applied else content, applied)
+
+    content: str
+    applied: bool
 
 
 def _apply_node(
     fn: Callable[[CommentedMap, ViolationDict], bool],
     content: str,
     violation: ViolationDict,
-) -> TransformResult:
-    """Adapter: call a node transform (task CommentedMap) via StructuredFile.find_task.
+) -> _ApplyResult:
+    """Adapter: parse YAML, find task, call node transform, serialize.
 
     Args:
         fn: Node transform function.
@@ -81,18 +70,25 @@ def _apply_node(
         violation: Violation dict.
 
     Returns:
-        TransformResult with serialized content and applied flag.
+        _ApplyResult with serialized content and applied flag.
     """
-    sf = StructuredFile.from_content("test.yml", content)
-    if sf is None:
-        return TransformResult(content, False)
-    task = sf.find_task(violation_line_to_int(violation), violation)
+    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+    try:
+        data = yaml.load(content)
+    except Exception:  # noqa: BLE001
+        return _ApplyResult(content, False)
+
+    line = violation_line_to_int(violation)
+    task = find_task_at_line(data, line) if line > 0 else None
     if task is None:
-        return TransformResult(content, False)
+        idx = violation_task_index(violation)
+        if idx is not None:
+            task = find_task_by_index(data, idx)
+    if task is None:
+        return _ApplyResult(content, False)
+
     applied = fn(task, violation)
-    if applied:
-        sf.mark_dirty()
-    return TransformResult(sf.serialize() if applied else content, applied)
+    return _ApplyResult(yaml.dumps(data) if applied else content, applied)
 
 
 # ---------------------------------------------------------------------------
@@ -101,43 +97,41 @@ def _apply_node(
 
 
 class TestTransformRegistry:
-    """Tests for TransformRegistry register, apply, len, iter, rule_ids."""
+    """Tests for TransformRegistry register, apply_node, len, iter, rule_ids."""
 
     def test_register_and_contains(self) -> None:
         """Verifies register adds rule and contains checks membership."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
         assert "L021" in reg
         assert "L999" not in reg
 
-    def test_apply_known_rule(self) -> None:
-        """Verifies apply returns TransformResult with content and applied flag."""
+    def test_apply_node_known_rule(self) -> None:
+        """Verifies apply_node calls the transform and returns True."""
         reg = TransformRegistry()
-        reg.register("TEST", lambda c, v: TransformResult("fixed", True))
-        result = reg.apply("TEST", "original", {})
-        assert result.content == "fixed"
-        assert result.applied is True
+        reg.register("TEST", node=lambda t, v: True)
+        task = CommentedMap({"name": "test", "ansible.builtin.debug": {"msg": "hi"}})
+        assert reg.apply_node("TEST", task, {}) is True
 
-    def test_apply_unknown_rule(self) -> None:
-        """Verifies apply returns original content and applied False for unknown rule."""
+    def test_apply_node_unknown_rule(self) -> None:
+        """Verifies apply_node returns False for unknown rule."""
         reg = TransformRegistry()
-        result = reg.apply("UNKNOWN", "original", {})
-        assert result.content == "original"
-        assert result.applied is False
+        task = CommentedMap({"name": "test"})
+        assert reg.apply_node("UNKNOWN", task, {}) is False
 
     def test_len_and_iter(self) -> None:
         """Verifies len and iteration over registered rule IDs."""
         reg = TransformRegistry()
-        reg.register("A", lambda c, v: TransformResult(c, False))
-        reg.register("B", lambda c, v: TransformResult(c, False))
+        reg.register("A", node=lambda t, v: False)
+        reg.register("B", node=lambda t, v: False)
         assert len(reg) == 2
         assert set(reg) == {"A", "B"}
 
     def test_rule_ids_sorted(self) -> None:
         """Verifies rule_ids returns sorted list of registered IDs."""
         reg = TransformRegistry()
-        reg.register("Z", lambda c, v: TransformResult(c, False))
-        reg.register("A", lambda c, v: TransformResult(c, False))
+        reg.register("Z", node=lambda t, v: False)
+        reg.register("A", node=lambda t, v: False)
         assert reg.rule_ids == ["A", "Z"]
 
 
@@ -152,7 +146,7 @@ class TestPartition:
     def test_is_finding_resolvable(self) -> None:
         """Verifies resolvable when rule_id in registry, not otherwise."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
         assert is_finding_resolvable({"rule_id": "L021"}, reg) is True
         assert is_finding_resolvable({"rule_id": "L999"}, reg) is False
 
@@ -166,14 +160,14 @@ class TestPartition:
     def test_is_finding_resolvable_with_native_prefix(self) -> None:
         """Verifies native:L021 is resolvable when L021 is registered."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
         assert is_finding_resolvable({"rule_id": "native:L021"}, reg) is True
         assert is_finding_resolvable({"rule_id": "native:L999"}, reg) is False
 
     def test_partition_native_prefix_to_tier1(self) -> None:
         """Verifies native:-prefixed violations partition into Tier 1."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
 
         violations: list[ViolationDict] = [
             {"rule_id": "native:L021"},
@@ -188,7 +182,7 @@ class TestPartition:
     def test_partition_three_tiers(self) -> None:
         """Verifies partition_violations splits into resolvable, AI, manual tiers."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
 
         violations: list[ViolationDict] = [
             {"rule_id": "L021"},
@@ -206,7 +200,7 @@ class TestPartition:
     def test_classify_violation_auto_fixable(self) -> None:
         """Verifies classify_violation returns auto-fixable for registered rules."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
         assert classify_violation({"rule_id": "L021"}, reg) == RemediationClass.AUTO_FIXABLE
         assert classify_violation({"rule_id": "native:L021"}, reg) == RemediationClass.AUTO_FIXABLE
 
@@ -224,7 +218,7 @@ class TestPartition:
     def test_add_classification_to_violations(self) -> None:
         """Verifies add_classification_to_violations mutates violations in place."""
         reg = TransformRegistry()
-        reg.register("L021", lambda c, v: TransformResult(c, False))
+        reg.register("L021", node=lambda t, v: False)
 
         violations: list[ViolationDict] = [
             {"rule_id": "L021"},
@@ -655,330 +649,6 @@ class TestFQCNTransform:
 
 
 # ---------------------------------------------------------------------------
-# RemediationEngine convergence loop
-# ---------------------------------------------------------------------------
-
-
-class TestRemediationEngine:
-    """Tests for RemediationEngine convergence, apply, oscillation, report tiers."""
-
-    def test_converges_in_one_pass(self, tmp_path: Path) -> None:
-        """Verifies engine fixes violations and converges in one pass when apply=True.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text(
-            textwrap.dedent("""\
-        - name: Copy file
-          ansible.builtin.copy:
-            src: /a
-            dest: /b
-        """)
-        )
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            content = playbook.read_text()
-            if "mode:" not in content:
-                return [{"rule_id": "L021", "file": str(playbook), "line": 1}]
-            return []
-
-        reg = TransformRegistry()
-        reg.register("L021", node=fix_missing_mode)
-        engine = RemediationEngine(reg, scan_fn, max_passes=5)
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.fixed >= 1
-        assert report.oscillation_detected is False
-        assert "mode:" in playbook.read_text()
-
-    def test_no_apply_restores_originals(self, tmp_path: Path) -> None:
-        """Verifies apply=False leaves file unchanged but reports patches.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        original = textwrap.dedent("""\
-        - name: Copy file
-          ansible.builtin.copy:
-            src: /a
-            dest: /b
-        """)
-        playbook.write_text(original)
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            content = playbook.read_text()
-            if "mode:" not in content:
-                return [{"rule_id": "L021", "file": str(playbook), "line": 1}]
-            return []
-
-        reg = TransformRegistry()
-        reg.register("L021", node=fix_missing_mode)
-        engine = RemediationEngine(reg, scan_fn, max_passes=5)
-
-        report = engine.remediate([str(playbook)], apply=False)
-        assert report.fixed >= 1
-        assert len(report.applied_patches) == 1
-        assert report.applied_patches[0].diff != ""
-        assert playbook.read_text() == original
-
-    def test_oscillation_detection(self, tmp_path: Path) -> None:
-        """Verifies oscillation_detected when transforms cause infinite loop.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: test\n  debug: msg=hi\n")
-
-        call_count = [0]
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            call_count[0] += 1
-            return [{"rule_id": "FLIP", "file": str(playbook), "line": 1}]
-
-        def flip_transform(content: str, violation: ViolationDict) -> TransformResult:
-            return TransformResult(content + "\n# flipped", True)
-
-        reg = TransformRegistry()
-        reg.register("FLIP", flip_transform)
-        engine = RemediationEngine(reg, scan_fn, max_passes=3)
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.oscillation_detected is True
-        assert report.passes <= 3
-
-    def test_empty_scan_no_changes(self, tmp_path: Path) -> None:
-        """Verifies no fixes when scan returns no violations.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: Clean\n  ansible.builtin.debug:\n    msg: hi\n")
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return []
-
-        reg = build_default_registry()
-        engine = RemediationEngine(reg, scan_fn, max_passes=5)
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.fixed == 0
-        assert report.passes == 1
-        assert report.oscillation_detected is False
-
-    def test_resolves_relative_file_path(self, tmp_path: Path) -> None:
-        """Verifies violations with relative file paths are resolved to absolute paths.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text(
-            textwrap.dedent("""\
-        - name: Copy file
-          ansible.builtin.copy:
-            src: /a
-            dest: /b
-        """)
-        )
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            content = playbook.read_text()
-            if "mode:" not in content:
-                return [{"rule_id": "L021", "file": "play.yml", "line": 1}]
-            return []
-
-        reg = TransformRegistry()
-        reg.register("L021", node=fix_missing_mode)
-        engine = RemediationEngine(reg, scan_fn, max_passes=5)
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.fixed >= 1
-        assert "mode:" in playbook.read_text()
-
-    def test_resolves_native_prefixed_rule_id(self, tmp_path: Path) -> None:
-        """Verifies violations with native:-prefixed rule IDs are matched to transforms.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text(
-            textwrap.dedent("""\
-        - name: Copy file
-          ansible.builtin.copy:
-            src: /a
-            dest: /b
-        """)
-        )
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            content = playbook.read_text()
-            if "mode:" not in content:
-                return [{"rule_id": "native:L021", "file": str(playbook), "line": 1}]
-            return []
-
-        reg = TransformRegistry()
-        reg.register("L021", node=fix_missing_mode)
-        engine = RemediationEngine(reg, scan_fn, max_passes=5)
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.fixed >= 1
-        assert "mode:" in playbook.read_text()
-
-    def test_ambiguous_basename_skipped(self, tmp_path: Path) -> None:
-        """Verifies violations with ambiguous basenames are skipped, not misapplied.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        dir_a = tmp_path / "a"
-        dir_b = tmp_path / "b"
-        dir_a.mkdir()
-        dir_b.mkdir()
-
-        play_a = dir_a / "main.yml"
-        play_b = dir_b / "main.yml"
-        play_a.write_text(
-            textwrap.dedent("""\
-        - name: Copy A
-          ansible.builtin.copy:
-            src: /a
-            dest: /b
-        """)
-        )
-        play_b.write_text(
-            textwrap.dedent("""\
-        - name: Copy B
-          ansible.builtin.copy:
-            src: /c
-            dest: /d
-        """)
-        )
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return [{"rule_id": "L021", "file": "main.yml", "line": 1}]
-
-        reg = TransformRegistry()
-        reg.register("L021", node=fix_missing_mode)
-        engine = RemediationEngine(reg, scan_fn, max_passes=2)
-
-        report = engine.remediate([str(play_a), str(play_b)], apply=False)
-        assert report.fixed == 0
-        assert "mode:" not in play_a.read_text()
-        assert "mode:" not in play_b.read_text()
-
-    def test_report_tiers(self, tmp_path: Path) -> None:
-        """Verifies remaining_ai and remaining_manual populated from partition.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: test\n  debug: msg=hi\n")
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return [
-                {"rule_id": "UNKNOWN_AI", "file": str(playbook), "line": 1},
-                {"rule_id": "MANUAL", "file": str(playbook), "line": 1, "ai_proposable": False},
-            ]
-
-        reg = TransformRegistry()
-        engine = RemediationEngine(reg, scan_fn, max_passes=1)
-
-        report = engine.remediate([str(playbook)], apply=False)
-        assert len(report.remaining_ai) == 1
-        assert len(report.remaining_manual) == 1
-        assert report.remaining_ai[0]["rule_id"] == "UNKNOWN_AI"
-        assert report.remaining_manual[0]["rule_id"] == "MANUAL"
-
-    def test_transform_failure_sets_resolution(self, tmp_path: Path) -> None:
-        """Verifies transform returning applied=False sets TRANSFORM_FAILED resolution.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: test\n  debug: msg=hi\n")
-
-        captured: list[ViolationDict] = []
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return [{"rule_id": "STUB", "file": str(playbook), "line": 1}]
-
-        def noop_transform(content: str, violation: ViolationDict) -> TransformResult:
-            captured.append(violation)
-            return TransformResult(content, False)
-
-        reg = TransformRegistry()
-        reg.register("STUB", noop_transform)
-        engine = RemediationEngine(reg, scan_fn, max_passes=2)
-
-        engine.remediate([str(playbook)], apply=False)
-        assert len(captured) >= 1
-        assert captured[0].get("remediation_class") == RemediationClass.AI_CANDIDATE
-        assert captured[0].get("remediation_resolution") == RemediationResolution.TRANSFORM_FAILED
-
-    def test_oscillation_sets_resolution(self, tmp_path: Path) -> None:
-        """Verifies oscillation sets OSCILLATION resolution on remaining Tier 1 violations.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: test\n  debug: msg=hi\n")
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return [{"rule_id": "FLIP", "file": str(playbook), "line": 1}]
-
-        def flip_transform(content: str, violation: ViolationDict) -> TransformResult:
-            return TransformResult(content + "\n# flipped", True)
-
-        reg = TransformRegistry()
-        reg.register("FLIP", flip_transform)
-        engine = RemediationEngine(reg, scan_fn, max_passes=3)
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.oscillation_detected is True
-
-    def test_remaining_violations_have_classification(self, tmp_path: Path) -> None:
-        """Verifies remaining violations carry remediation_class and remediation_resolution.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: test\n  debug: msg=hi\n")
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return [
-                {"rule_id": "UNKNOWN", "file": str(playbook), "line": 1},
-                {"rule_id": "MANUAL", "file": str(playbook), "line": 2, "ai_proposable": False},
-            ]
-
-        reg = TransformRegistry()
-        engine = RemediationEngine(reg, scan_fn, max_passes=1)
-
-        report = engine.remediate([str(playbook)], apply=False)
-        for v in report.remaining_ai + report.remaining_manual:
-            assert "remediation_class" in v
-            assert "remediation_resolution" in v
-            assert v["remediation_resolution"] == RemediationResolution.UNRESOLVED
-
-
-# ---------------------------------------------------------------------------
 # L008 transform: local_action
 # ---------------------------------------------------------------------------
 
@@ -1210,54 +880,86 @@ class TestL015JinjaWhen:
 
 
 class TestL020OctalMode:
-    """Tests for fix_octal_mode L020 transform."""
+    """Tests for fix_octal_mode L020 node transform."""
+
+    @staticmethod
+    def _parse_task(yaml_str: str) -> CommentedMap:
+        """Parse YAML and return the first task CommentedMap.
+
+        Args:
+            yaml_str: Indented YAML task list string.
+
+        Returns:
+            First task CommentedMap from the parsed list.
+        """
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        data = yaml.load(textwrap.dedent(yaml_str))
+        return cast(CommentedMap, data[0])  # type: ignore[index]
 
     def test_octal_literal_to_string(self) -> None:
         """YAML 1.1 parses 0644 as octal int 420; should become '0644'."""
-        content = textwrap.dedent("""\
+        task = self._parse_task("""\
         - name: Set perms
           ansible.builtin.file:
             path: /tmp/foo
             mode: 0644
         """)
-        result = fix_octal_mode(content, {"rule_id": "L020", "line": 1})
-        assert result.applied is True
-        assert "0644" in result.content
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert task["ansible.builtin.file"]["mode"] == "0644"
 
     def test_decimal_int_to_octal_string(self) -> None:
         """Bare 644 is decimal in YAML; digits are all valid octal, treated as intended octal."""
-        content = textwrap.dedent("""\
+        task = self._parse_task("""\
         - name: Set perms
           ansible.builtin.file:
             path: /tmp/foo
             mode: 644
         """)
-        result = fix_octal_mode(content, {"rule_id": "L020", "line": 1})
-        assert result.applied is True
-        assert "0644" in result.content
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert task["ansible.builtin.file"]["mode"] == "0644"
 
     def test_no_change_when_already_string(self) -> None:
         """Verifies no change when mode already quoted string."""
-        content = textwrap.dedent("""\
+        task = self._parse_task("""\
         - name: Set perms
           ansible.builtin.file:
             path: /tmp/foo
             mode: "0644"
         """)
-        result = fix_octal_mode(content, {"rule_id": "L020", "line": 1})
-        assert result.applied is False
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is False
 
     def test_string_without_leading_zero(self) -> None:
         """Verifies string 644 converted to 0644."""
-        content = textwrap.dedent("""\
+        task = self._parse_task("""\
         - name: Set perms
           ansible.builtin.file:
             path: /tmp/foo
             mode: "644"
         """)
-        result = fix_octal_mode(content, {"rule_id": "L020", "line": 1})
-        assert result.applied is True
-        assert "0644" in result.content
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert task["ansible.builtin.file"]["mode"] == "0644"
+
+    def test_octal_0755(self) -> None:
+        """0755 → int 493 → should become '0755'."""
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: 0755
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert task["ansible.builtin.file"]["mode"] == "0755"
+
+    def test_bare_755(self) -> None:
+        """Bare 755, all digits valid octal → '0755'."""
+        task = self._parse_task("""\
+        - name: Set perms
+          ansible.builtin.file:
+            path: /tmp/foo
+            mode: 755
+        """)
+        assert fix_octal_mode(task, {"rule_id": "L020", "line": 1}) is True
+        assert task["ansible.builtin.file"]["mode"] == "0755"
 
 
 # ---------------------------------------------------------------------------
@@ -1800,136 +1502,66 @@ class TestViolationTaskIndex:
 class TestFindTaskByIndex:
     """Tests for find_task_by_index()."""
 
+    @staticmethod
+    def _load(content: str) -> CommentedMap:
+        yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
+        return yaml.load(content)
+
     def test_finds_task_in_seq(self) -> None:
         """Finds a task by index in a bare CommentedSeq."""
-        sf = StructuredFile.from_content(
-            "tasks.yml",
+        data = self._load(
             textwrap.dedent("""\
-            - name: First
-              ansible.builtin.debug:
-                msg: one
-            - name: Second
-              ansible.builtin.debug:
-                msg: two
-            """),
+        - name: First
+          ansible.builtin.debug:
+            msg: one
+        - name: Second
+          ansible.builtin.debug:
+            msg: two
+        """)
         )
-        assert sf is not None
-        task = find_task_by_index(sf.data, 1)
+        task = find_task_by_index(data, 1)
         assert task is not None
         assert task["name"] == "Second"
 
     def test_finds_task_in_play_tasks(self) -> None:
         """Finds a task by index in a play's tasks list."""
-        sf = StructuredFile.from_content(
-            "play.yml",
+        data = self._load(
             textwrap.dedent("""\
-            tasks:
-              - name: First
-                ansible.builtin.debug:
-                  msg: one
-              - name: Second
-                ansible.builtin.debug:
-                  msg: two
-            """),
+        tasks:
+          - name: First
+            ansible.builtin.debug:
+              msg: one
+          - name: Second
+            ansible.builtin.debug:
+              msg: two
+        """)
         )
-        assert sf is not None
-        task = find_task_by_index(sf.data, 0)
+        task = find_task_by_index(data, 0)
         assert task is not None
         assert task["name"] == "First"
 
     def test_returns_none_for_out_of_range(self) -> None:
         """Returns None when index is out of range."""
-        sf = StructuredFile.from_content(
-            "tasks.yml",
+        data = self._load(
             textwrap.dedent("""\
-            - name: Only task
-              ansible.builtin.debug:
-                msg: hi
-            """),
+        - name: Only task
+          ansible.builtin.debug:
+            msg: hi
+        """)
         )
-        assert sf is not None
-        assert find_task_by_index(sf.data, 5) is None
+        assert find_task_by_index(data, 5) is None
 
     def test_finds_task_in_handlers(self) -> None:
         """Finds a task by index in a play's handlers list."""
-        sf = StructuredFile.from_content(
-            "play.yml",
+        data = self._load(
             textwrap.dedent("""\
-            handlers:
-              - name: Restart service
-                ansible.builtin.service:
-                  name: httpd
-                  state: restarted
-            """),
-        )
-        assert sf is not None
-        task = find_task_by_index(sf.data, 0)
-        assert task is not None
-        assert task["name"] == "Restart service"
-
-
-class TestRemediationProgress:
-    """Tests for RemediationEngine progress_callback reporting."""
-
-    def test_progress_callback_called_during_remediation(self, tmp_path: Path) -> None:
-        """Callback receives pass and convergence messages.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text(
-            textwrap.dedent("""\
-        - name: Copy file
-          ansible.builtin.copy:
-            src: /a
-            dest: /b
+        handlers:
+          - name: Restart service
+            ansible.builtin.service:
+              name: httpd
+              state: restarted
         """)
         )
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            content = playbook.read_text()
-            if "mode:" not in content:
-                return [{"rule_id": "L021", "file": str(playbook), "line": 1}]
-            return []
-
-        progress_messages: list[tuple[str, str, float, int]] = []
-
-        def on_progress(phase: str, message: str, fraction: float = 0.0, level: int = 2) -> None:
-            progress_messages.append((phase, message, fraction, level))
-
-        reg = TransformRegistry()
-        reg.register("L021", node=fix_missing_mode)
-        engine = RemediationEngine(
-            reg,
-            scan_fn,
-            max_passes=5,
-            progress_callback=on_progress,
-        )
-
-        report = engine.remediate([str(playbook)], apply=True)
-        assert report.fixed >= 1
-
-        phases = [p for p, _, _, _ in progress_messages]
-        assert "tier1" in phases, f"Expected tier1 phase in: {progress_messages}"
-
-        messages = [m for _, m, _, _ in progress_messages]
-        assert any("Pass 1" in m for m in messages), f"Expected pass 1 message in: {messages}"
-        assert any("transform" in m.lower() for m in messages), f"Expected transform message in: {messages}"
-
-    def test_progress_callback_none_is_safe(self, tmp_path: Path) -> None:
-        """Engine works fine without a progress callback.
-
-        Args:
-            tmp_path: Pytest temporary directory fixture.
-        """
-        playbook = tmp_path / "play.yml"
-        playbook.write_text("- name: test\n  debug:\n    msg: hi\n")
-
-        def scan_fn(paths: list[str]) -> list[ViolationDict]:
-            return []
-
-        reg = TransformRegistry()
-        engine = RemediationEngine(reg, scan_fn, progress_callback=None)
-        report = engine.remediate([str(playbook)])
-        assert report.passes == 1
+        task = find_task_by_index(data, 0)
+        assert task is not None
+        assert task["name"] == "Restart service"

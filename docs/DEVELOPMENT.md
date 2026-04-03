@@ -164,19 +164,17 @@ src/apme_engine/
 │       ├── __init__.py
 │       └── scanner.py      gitleaks binary wrapper, vault/Jinja filtering
 │
-├── remediation/            Remediation engine (Tier 1 transforms + Tier 2 AI)
-│   ├── engine.py           RemediationEngine (convergence loop)
+├── remediation/            Remediation engine (graph convergence + AI)
+│   ├── graph_engine.py     GraphRemediationEngine (graph-aware convergence loop)
 │   ├── partition.py        is_finding_resolvable(), classify_violation()
-│   ├── registry.py         TransformRegistry
-│   ├── ai_provider.py      AIProvider Protocol, AIProposal dataclass
-│   ├── abbenay_provider.py AbbenayProvider (default AI impl via abbenay_grpc)
-│   ├── enrich.py           Enrich violations/context for remediation
-│   ├── structured.py       Structured remediation payloads
-│   ├── unit_segmenter.py   Split content into task snippets for AI
-│   └── transforms/         Per-rule deterministic fix functions
+│   ├── registry.py         TransformRegistry (node transforms only)
+│   ├── ai_provider.py      AIProvider protocol, AINodeFix, AINodeContext
+│   ├── ai_context.py       AINodeContext builder from ContentGraph
+│   ├── abbenay_provider.py AbbenayProvider (Abbenay gRPC AI backend)
+│   └── transforms/         Per-rule deterministic node fix functions
 │       ├── __init__.py     auto-registers all transforms
 │       ├── _helpers.py     Shared transform helpers
-│       └── L007_*, L021_*, L046_*, M001_*, M006_*, M008_*, M009_*, ...
+│       └── L007_*, L020_*, L021_*, L046_*, M001_*, M006_*, M008_*, M009_*, ...
 │
 ├── data/
 │   └── ansible_best_practices.yml  structured best practices for AI prompts

@@ -191,6 +191,7 @@ message Proposal {
   int32 tier = 11;
   string status = 12;       // "proposed" or "declined"
   string suggestion = 13;   // manual remediation guidance (declined only)
+  string source = 14;       // origin: "ai", "deterministic", "plugin", etc.
 }
 
 message ProposalsReady {

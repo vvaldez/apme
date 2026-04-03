@@ -1552,6 +1552,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             return all_violations
 
+        ai_provider = self._resolve_ai_provider(session.fix_options)
+
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
             graph=graph,
@@ -1559,6 +1561,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             max_passes=max_passes,
             progress_callback=progress_callback,
             rescan_fn=_rescan_bridge,
+            ai_provider=ai_provider,  # type: ignore[arg-type]
         )
 
         hb_task: asyncio.Task[None] = asyncio.create_task(_heartbeat())  # type: ignore[arg-type]
@@ -1682,10 +1685,21 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        # Graph engine does not support Tier 2 AI yet — go straight to result
-        session.status = 3  # COMPLETE
-        async for event in self._session_build_result(session):
-            yield event
+        # Yield AI proposals for human approval, or complete immediately
+        if graph_report.ai_proposals:
+            proposals = self._build_graph_proposals(graph_report.ai_proposals)
+            for p in proposals:
+                session.proposals[p.id] = p
+            session.ai_proposals = list(graph_report.ai_proposals)
+            session.status = 4  # AWAITING_APPROVAL
+
+            yield SessionEvent(
+                proposals_ready=ProposalsReady(proposals=list(proposals)),
+            )
+        else:
+            session.status = 3  # COMPLETE
+            async for event in self._session_build_result(session):
+                yield event
 
     @staticmethod
     def _resolve_ai_provider(fix_opts: FixOptions | None) -> object | None:
@@ -1736,69 +1750,48 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         return provider
 
     @staticmethod
-    def _build_proposals_from_ai(
-        ai_proposals: Sequence[object],
+    def _build_graph_proposals(
+        ai_node_proposals: Sequence[object],
     ) -> list[Proposal]:
-        """Convert AIProposal objects into Proposal protos with diff data.
-
-        Each AIPatch within an AIProposal becomes a separate Proposal proto
-        with status="proposed". Skipped violations become Proposal protos
-        with status="declined" carrying the AI's reason and suggestion.
+        """Convert graph-based ``AINodeProposal`` objects to proto ``Proposal``.
 
         Args:
-            ai_proposals: AIProposal objects from the remediation engine.
+            ai_node_proposals: ``AINodeProposal`` objects from the graph engine.
 
         Returns:
-            List of Proposal protos (both proposed and declined).
+            List of Proposal protos with ``status="proposed"``.
         """
-        from apme_engine.remediation.ai_provider import AIProposal  # noqa: PLC0415
+        from apme_engine.remediation.graph_engine import AINodeProposal  # noqa: PLC0415
 
         proposals: list[Proposal] = []
-        decline_idx = 0
-        for idx, item in enumerate(ai_proposals):
-            ap: AIProposal = item  # type: ignore[assignment]
+        for idx, item in enumerate(ai_node_proposals):
+            anp: AINodeProposal = item  # type: ignore[assignment]
+            rule_id = ",".join(anp.rule_ids) if anp.rule_ids else "ai-fix"
 
-            before_text = ap.original_snippet
-            after_text = ap.fixed_snippet
-            if before_text.endswith("\n") and after_text and not after_text.endswith("\n"):
-                after_text += "\n"
-
-            rule_id = ",".join(ap.rule_ids) if ap.rule_ids else "ai-fix"
-            first_patch = ap.patches[0] if ap.patches else None
-
-            proposals.append(
-                Proposal(
-                    id=f"t2-{idx:04d}",
-                    file=ap.file,
-                    rule_id=rule_id,
-                    line_start=first_patch.line_start if first_patch else 0,
-                    line_end=first_patch.line_end if first_patch else 0,
-                    before_text=before_text,
-                    after_text=after_text,
-                    diff_hunk=ap.diff,
-                    confidence=ap.confidence,
-                    explanation=ap.explanation,
-                    tier=2,
-                    status="proposed",
+            diff_hunk = "".join(
+                difflib.unified_diff(
+                    anp.before_yaml.splitlines(keepends=True),
+                    anp.after_yaml.splitlines(keepends=True),
+                    fromfile=f"a/{anp.file_path}",
+                    tofile=f"b/{anp.file_path} (AI proposed)",
                 )
             )
 
-            for sk in ap.skipped:
-                proposals.append(
-                    Proposal(
-                        id=f"skip-{decline_idx:04d}",
-                        file=ap.file,
-                        rule_id=sk.rule_id,
-                        line_start=sk.line,
-                        line_end=sk.line,
-                        explanation=sk.reason,
-                        suggestion=sk.suggestion,
-                        tier=2,
-                        status="declined",
-                        confidence=0.0,
-                    )
+            proposals.append(
+                Proposal(
+                    id=f"ai-{idx:04d}",
+                    file=anp.file_path,
+                    rule_id=rule_id,
+                    before_text=anp.before_yaml,
+                    after_text=anp.after_yaml,
+                    diff_hunk=diff_hunk,
+                    confidence=anp.confidence,
+                    explanation=anp.explanation,
+                    tier=2,
+                    status="proposed",
+                    source="ai",
                 )
-                decline_idx += 1
+            )
         return proposals
 
     @staticmethod
@@ -1807,6 +1800,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         approved_ids: set[str],
     ) -> int:
         """Apply approved proposals to session working state.
+
+        For graph-based proposals (``id`` starts with ``"ai-"``), the
+        ContentGraph already holds the pending changes.  Approved nodes
+        are promoted; rejected nodes are reverted.  Post-approval,
+        ``splice_modifications`` re-generates working files.
+
+        For legacy file-based proposals, text-based find/replace is used.
 
         Args:
             session: Active session whose working files will be mutated.
@@ -1819,36 +1819,20 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             session.status = 3  # COMPLETE
             return 0
 
-        applied = 0
-        for pid in approved_ids:
-            proposal = session.proposals.get(pid)
-            if not proposal:
-                logger.warning("Skipping proposal %s: not found", pid)
-                continue
-            content = session.working_files.get(proposal.file, b"")
-            text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
-            if proposal.before_text not in text:
-                logger.warning(
-                    "Skipping proposal %s (%s): before_text not found in working file %s",
-                    pid,
-                    proposal.rule_id,
-                    proposal.file,
-                )
-                continue
-            new_text = text.replace(proposal.before_text, proposal.after_text, 1)
-            session.working_files[proposal.file] = new_text.encode("utf-8")
-            session.approved_proposals.append(
-                {
-                    "proposal_id": pid,
-                    "rule_id": proposal.rule_id,
-                    "file": proposal.file,
-                    "tier": proposal.tier,
-                    "confidence": proposal.confidence,
-                }
+        graph = session.content_graph
+        originals = session.graph_originals
+
+        has_graph_proposals = graph is not None and any(pid.startswith("ai-") for pid in session.proposals)
+
+        if has_graph_proposals and graph is not None and originals is not None:
+            applied = _apply_graph_approvals(
+                session,
+                graph,
+                originals,
+                approved_ids,
             )
-            session.proposals.pop(pid)
-            session.approved_ids.add(pid)
-            applied += 1
+        else:
+            applied = _apply_text_approvals(session, approved_ids)
 
         session.status = 3  # COMPLETE — user has finished reviewing
         logger.info(
@@ -2148,6 +2132,123 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
     await start_sinks()
     await _push_rule_catalog_to_gateway()
     return server
+
+
+def _apply_graph_approvals(
+    session: SessionState,
+    graph: object,
+    originals: dict[str, str],
+    approved_ids: set[str],
+) -> int:
+    """Apply graph-based approvals: approve/reject nodes, re-splice files.
+
+    Args:
+        session: Active session.
+        graph: ContentGraph with pending AI transforms.
+        originals: Original file contents for splicing.
+        approved_ids: Proposal IDs the user accepted.
+
+    Returns:
+        Number of proposals applied.
+    """
+    from apme_engine.engine.content_graph import ContentGraph  # noqa: PLC0415
+    from apme_engine.remediation.graph_engine import (  # noqa: PLC0415
+        AINodeProposal,
+        splice_modifications,
+    )
+
+    if not isinstance(graph, ContentGraph):
+        return _apply_text_approvals(session, approved_ids)
+
+    ai_proposals: list[AINodeProposal] = [p for p in session.ai_proposals if isinstance(p, AINodeProposal)]
+
+    proposal_node_map: dict[str, str] = {}
+    for idx, anp in enumerate(ai_proposals):
+        proposal_node_map[f"ai-{idx:04d}"] = anp.node_id
+
+    applied = 0
+    all_proposal_ids = set(session.proposals.keys())
+
+    for pid in all_proposal_ids:
+        proposal = session.proposals.get(pid)
+        if not proposal:
+            continue
+
+        node_id = proposal_node_map.get(pid)
+        if node_id is None:
+            continue
+
+        if pid in approved_ids:
+            graph.approve_node(node_id)
+            session.approved_proposals.append(
+                {
+                    "proposal_id": pid,
+                    "rule_id": proposal.rule_id,
+                    "file": proposal.file,
+                    "tier": proposal.tier,
+                    "confidence": proposal.confidence,
+                    "source": proposal.source,
+                }
+            )
+            session.approved_ids.add(pid)
+            applied += 1
+        else:
+            graph.reject_node(node_id)
+
+        session.proposals.pop(pid, None)
+
+    patches = splice_modifications(graph, originals)
+    for patch in patches:
+        session.working_files[patch.path] = patch.patched.encode("utf-8")
+
+    return applied
+
+
+def _apply_text_approvals(
+    session: SessionState,
+    approved_ids: set[str],
+) -> int:
+    """Apply legacy text-based approvals via find/replace.
+
+    Args:
+        session: Active session whose working files will be mutated.
+        approved_ids: Set of proposal IDs the user accepted.
+
+    Returns:
+        Number of proposals successfully applied.
+    """
+    applied = 0
+    for pid in list(approved_ids):
+        proposal = session.proposals.get(pid)
+        if not proposal:
+            logger.warning("Skipping proposal %s: not found", pid)
+            continue
+        content = session.working_files.get(proposal.file, b"")
+        text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else str(content)
+        if proposal.before_text not in text:
+            logger.warning(
+                "Skipping proposal %s (%s): before_text not found in working file %s",
+                pid,
+                proposal.rule_id,
+                proposal.file,
+            )
+            continue
+        new_text = text.replace(proposal.before_text, proposal.after_text, 1)
+        session.working_files[proposal.file] = new_text.encode("utf-8")
+        session.approved_proposals.append(
+            {
+                "proposal_id": pid,
+                "rule_id": proposal.rule_id,
+                "file": proposal.file,
+                "tier": proposal.tier,
+                "confidence": proposal.confidence,
+            }
+        )
+        session.proposals.pop(pid)
+        session.approved_ids.add(pid)
+        applied += 1
+
+    return applied
 
 
 _cached_register_request: reporting_pb2.RegisterRulesRequest | None = None

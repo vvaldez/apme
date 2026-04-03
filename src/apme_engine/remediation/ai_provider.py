@@ -1,38 +1,16 @@
-"""AIProvider protocol and data models for Tier 2 AI escalation.
+"""AIProvider protocol and data models for graph-native AI remediation.
 
-See ADR-024 for the rationale behind this abstraction.
+See ADR-024 for the rationale behind this abstraction and ADR-044
+for the graph-native transform design.
 """
 
 from __future__ import annotations
 
-import difflib
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from apme_engine.engine.models import ViolationDict
-
-
-@dataclass
-class AIPatch:
-    """A single task-level fix proposed by an AI provider.
-
-    Attributes:
-        rule_id: Rule that was fixed.
-        line_start: 1-based start line in the original file.
-        line_end: 1-based end line (inclusive) in the original file.
-        fixed_lines: Replacement text for the line range.
-        explanation: What was changed.
-        confidence: 0.0-1.0 confidence score.
-        diff_hunk: Unified diff hunk for this patch only.
-    """
-
-    rule_id: str
-    line_start: int
-    line_end: int
-    fixed_lines: str
-    explanation: str
-    confidence: float
-    diff_hunk: str = ""
+if TYPE_CHECKING:
+    from apme_engine.remediation.ai_context import AINodeContext
 
 
 @dataclass
@@ -53,174 +31,26 @@ class AISkipped:
 
 
 @dataclass
-class AIProposal:
-    """AI-generated fix for a single unit (task/block).
+class AINodeFix:
+    """AI-generated fix for a single graph node.
 
-    Each proposal is independently approvable and carries the original
-    and fixed snippets for content-based application — no line-number
-    dependency at apply time.
+    Returned by ``AIProvider.propose_node_fix()``.  Contains the
+    corrected YAML text that will be applied via
+    ``ContentGraph.apply_transform()``.
 
     Attributes:
-        file: Absolute path to the file containing the unit.
-        original_snippet: Original YAML text of the unit.
-        fixed_snippet: Corrected YAML text from the LLM.
-        diff: Unified diff (original -> proposed) for display.
+        fixed_snippet: Corrected YAML text for the node.
         rule_ids: Rule IDs addressed by this fix.
-        confidence: Confidence score (0.0-1.0).
         explanation: Human-readable summary of changes.
-        skipped: Violations the AI could not fix, with reasons.
-        original_yaml: Full original file content (for diff context).
-        fixed_yaml: Full file content with this unit's fix applied.
-        patches: Legacy AIPatch list (for proto/gateway compat).
-        hybrid_transforms_applied: Count of Tier 1 transforms applied
-            to clean up AI output during hybrid validation.
+        confidence: Confidence score (0.0-1.0).
+        skipped: Violations the AI could not fix.
     """
 
-    file: str
-    original_snippet: str
     fixed_snippet: str
-    diff: str
     rule_ids: list[str] = field(default_factory=list)
-    confidence: float = 0.85
     explanation: str = ""
+    confidence: float = 0.85
     skipped: list[AISkipped] = field(default_factory=list)
-    original_yaml: str = ""
-    fixed_yaml: str = ""
-    patches: list[AIPatch] = field(default_factory=list)
-    hybrid_transforms_applied: int = 0
-
-    def apply(self, file_content: str) -> str:
-        """Apply this proposal to file content using content-based replacement.
-
-        Finds the original snippet in the current file content and replaces
-        it with the fixed snippet.  Independent of line numbers — safe to
-        apply after other proposals have changed the file.
-
-        Args:
-            file_content: Current file content (may differ from original_yaml
-                if other proposals were already applied).
-
-        Returns:
-            File content with this unit's fix applied.
-
-        Raises:
-            ValueError: If the original snippet is not found in file_content
-                or if it occurs multiple times (ambiguous application).
-        """
-        occurrences = file_content.count(self.original_snippet)
-        if occurrences == 0:
-            raise ValueError(f"Cannot apply proposal: original snippet not found in {self.file}")
-        if occurrences > 1:
-            raise ValueError(f"Cannot apply proposal: original snippet occurs {occurrences} times in {self.file}")
-        return file_content.replace(self.original_snippet, self.fixed_snippet, 1)
-
-
-def _resolve_overlaps(patches: list[AIPatch]) -> list[AIPatch]:
-    """Remove overlapping patches, keeping the higher-confidence one.
-
-    When two patches overlap in line ranges, the one with higher confidence
-    wins.  On a tie, the patch that covers more lines is preferred.
-
-    Args:
-        patches: Unsorted list of patches.
-
-    Returns:
-        Non-overlapping subset sorted by line_start ascending.
-    """
-    if not patches:
-        return []
-
-    by_start = sorted(
-        patches,
-        key=lambda p: (p.line_start, -(p.line_end - p.line_start)),
-    )
-
-    kept: list[AIPatch] = [by_start[0]]
-    for patch in by_start[1:]:
-        prev = kept[-1]
-        if patch.line_start <= prev.line_end:
-            prev_span = prev.line_end - prev.line_start
-            cur_span = patch.line_end - patch.line_start
-            if (patch.confidence, cur_span) > (prev.confidence, prev_span):
-                kept[-1] = patch
-        else:
-            kept.append(patch)
-
-    return kept
-
-
-def apply_patches(file_content: str, patches: list[AIPatch]) -> str:
-    """Apply task-level patches to file content.
-
-    Overlapping patches are resolved first (higher confidence wins),
-    then applied bottom-up to preserve line numbers.
-
-    Args:
-        file_content: Original file content.
-        patches: Patches to apply (overlaps resolved internally).
-
-    Returns:
-        File content with all patches applied.
-    """
-    lines = file_content.splitlines(keepends=True)
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-
-    clean = _resolve_overlaps(patches)
-
-    for patch in reversed(clean):
-        start_idx = patch.line_start - 1
-        end_idx = patch.line_end
-
-        replacement = patch.fixed_lines
-        if replacement and not replacement.endswith("\n"):
-            replacement += "\n"
-        replacement_lines = replacement.splitlines(keepends=True)
-
-        lines[start_idx:end_idx] = replacement_lines
-
-    return "".join(lines)
-
-
-def generate_patch_hunks(
-    original: str,
-    patches: list[AIPatch],
-    file_path: str = "",
-) -> list[AIPatch]:
-    """Populate diff_hunk on each patch by diffing against original.
-
-    Args:
-        original: Original file content.
-        patches: Patches (modified in place).
-        file_path: File path for diff headers.
-
-    Returns:
-        The same patches with diff_hunk populated.
-    """
-    orig_lines = original.splitlines(keepends=True)
-
-    for patch in patches:
-        start_idx = patch.line_start - 1
-        end_idx = patch.line_end
-        old_chunk = orig_lines[start_idx:end_idx]
-
-        new_text = patch.fixed_lines
-        if new_text and not new_text.endswith("\n"):
-            new_text += "\n"
-        new_chunk = new_text.splitlines(keepends=True)
-
-        hunk = "".join(
-            difflib.unified_diff(
-                old_chunk,
-                new_chunk,
-                fromfile=f"a/{file_path}",
-                tofile=f"b/{file_path} (AI proposed)",
-                lineterm="",
-            )
-        )
-        patch.diff_hunk = hunk
-
-    return patches
 
 
 class AIProvider(Protocol):
@@ -228,60 +58,30 @@ class AIProvider(Protocol):
 
     The engine depends only on this protocol, never on a concrete
     LLM client library.  See ADR-024.
+
+    The sole entry point is ``propose_node_fix()``, which receives
+    graph-derived context and returns a node-level fix.
     """
 
-    async def propose_fixes(
+    async def propose_node_fix(
         self,
-        violations: list[ViolationDict],
-        file_content: str,
+        context: AINodeContext,
         *,
         model: str | None = None,
-        feedback: str | None = None,
-    ) -> tuple[list[AIPatch] | None, list[AISkipped]]:
-        """Propose fixes for multiple violations in a single file.
+    ) -> AINodeFix | None:
+        """Propose a fix for a single graph node using graph-derived context.
 
-        The provider receives the full file for context and all violations.
-        It returns task-level patches (line-range replacements) and a list
-        of violations it could not fix with explanations.
-
-        Args:
-            violations: All violations for this file.
-            file_content: Full content of the file.
-            model: Optional model identifier (e.g. 'openai/gpt-4o').
-            feedback: Validation failure context for retry attempts.
-
-        Returns:
-            Tuple of (patches or None on failure, skipped violations).
-        """
-        ...
-
-    async def propose_unit_fixes(
-        self,
-        violations: list[ViolationDict],
-        snippet: str,
-        file_path: str,
-        line_start: int,
-        line_end: int,
-        *,
-        model: str | None = None,
-        feedback: str | None = None,
-    ) -> tuple[list[AIPatch] | None, list[AISkipped]]:
-        """Propose fixes for violations within a single fixable unit.
-
-        Receives only the code snippet for the unit (a single task or
-        block), reducing token usage and improving fix quality.
-        Returned patches use file-level line numbers.
+        The graph-native entry point for AI remediation.  Receives an
+        ``AINodeContext`` containing the node's YAML, violations, parent
+        context, and sibling snippets — all derived from the ContentGraph.
+        Returns an ``AINodeFix`` with the corrected YAML, or ``None``
+        if the AI cannot fix any of the violations.
 
         Args:
-            violations: Violations scoped to this unit.
-            snippet: YAML text of just this unit.
-            file_path: Path to the file (for display).
-            line_start: 1-based first line of the unit in the file.
-            line_end: 1-based last line of the unit in the file.
+            context: Graph-derived context bundle for this node.
             model: Optional model identifier.
-            feedback: Validation failure context for retry.
 
         Returns:
-            Tuple of (patches or None on failure, skipped violations).
+            ``AINodeFix`` with corrected YAML, or ``None`` on failure.
         """
         ...

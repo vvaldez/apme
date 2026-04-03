@@ -32,7 +32,7 @@ def build_default_registry() -> TransformRegistry:
     """
     reg = TransformRegistry()
 
-    # Node transforms (CommentedMap task, used via apply_structured find_task wrapper)
+    # Node transforms (CommentedMap task, used via ContentGraph.apply_transform)
     reg.register("L007", node=fix_shell_to_command)
     reg.register("L008", node=fix_local_action)
     reg.register("L009", node=fix_empty_string)
@@ -48,8 +48,7 @@ def build_default_registry() -> TransformRegistry:
     reg.register("L043", node=fix_bare_vars)
     reg.register("L046", node=fix_free_form)
 
-    # L020 operates on raw lines (YAML 1.1 octal ambiguity) — legacy string path
-    reg.register("L020", fix_octal_mode)
+    reg.register("L020", node=fix_octal_mode)
 
     # Ansible validator rules (carry resolved_fqcn from ansible-core)
     # M001-M004 all report FQCN violations, so the same fix applies

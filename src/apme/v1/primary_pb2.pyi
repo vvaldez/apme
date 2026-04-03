@@ -176,6 +176,9 @@ class Proposal:
     confidence: float
     explanation: str
     tier: int
+    status: str
+    suggestion: str
+    source: str
     def __init__(self, **kwargs: object) -> None: ...
 
 class ProposalsReady:
