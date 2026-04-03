@@ -8,11 +8,14 @@ For full local development setup, tooling reference, and tox environments, see [
 
 - [License](#license)
 - [Code of Conduct](#code-of-conduct)
+- [Developer Certificate of Origin (DCO)](#developer-certificate-of-origin-dco)
+- [Commit Signing](#commit-signing)
 - [Getting Started](#getting-started)
 - [Development Setup](#development-setup)
 - [Making Changes](#making-changes)
 - [Security Guidelines](#security-guidelines)
 - [Pull Request Process](#pull-request-process)
+  - [Branch Protection Policy](#branch-protection-policy)
 - [Coding Standards](#coding-standards)
 
 ---
@@ -28,6 +31,86 @@ By contributing to APME, you agree that your contributions will be licensed unde
 ## Code of Conduct
 
 This project follows a standard code of conduct. Be respectful, inclusive, and professional in all interactions.
+
+---
+
+## Developer Certificate of Origin (DCO)
+
+Contributors are expected to include a `Signed-off-by` trailer in the commit
+message, certifying that they have the right to submit the work under the
+project's Apache 2.0 license. This follows the
+[Developer Certificate of Origin](https://developercertificate.org/) (DCO) and
+is reviewed during the pull request process.
+
+Add `-s` (or `--signoff`) to your commit command:
+
+```bash
+git commit -s -m "feat(engine): add new validation rule"
+```
+
+This appends a line like:
+
+```
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+If you forget, you can amend the most recent commit:
+
+```bash
+git commit --amend -s --no-edit
+```
+
+---
+
+## Commit Signing
+
+We recommend cryptographically signing commits (and maintainers are expected to do so).
+Signed commits show a "Verified" badge on GitHub and provide stronger authorship
+guarantees.
+
+### GPG signing
+
+```bash
+# Generate a key (if you don't have one)
+gpg --full-generate-key   # choose RSA 4096, your GitHub email
+
+# Tell git to use it
+gpg --list-secret-keys --keyid-format=long
+git config --global user.signingkey <KEY_ID>
+git config --global commit.gpgsign true
+
+# Export and add to GitHub → Settings → SSH and GPG keys
+gpg --armor --export <KEY_ID>
+```
+
+### SSH signing (Git 2.34+)
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+```
+
+Upload the same public key to GitHub under **Settings → SSH and GPG keys →
+New SSH key** with key type "Signing".
+
+### Verifying locally
+
+For GPG-signed commits:
+
+```bash
+git log --show-signature -1
+```
+
+For SSH-signed commits, Git also requires an `allowedSignersFile`:
+
+```bash
+# Create an allowed signers file mapping your email to your public key
+echo "your.email@example.com $(cat ~/.ssh/id_ed25519.pub)" >> ~/.ssh/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+
+git log --show-signature -1
+```
 
 ---
 
@@ -198,6 +281,22 @@ Brief description of changes.
 3. All discussions resolved
 4. CI passes
 5. Squash merge to `main`
+
+### Branch Protection Policy
+
+The `main` branch enforces these protections:
+
+- **Require approvals** — at least 1 approving review
+- **Require review from Code Owners** — CODEOWNERS-matched paths need approval from a code owner
+- **Require status checks to pass** — `prek / prek`, `test / test`, `test / integration`, and `test / ui` must be green before merge
+- **Require conversation resolution** — all review threads must be resolved
+- **Require linear history** — no merge commits (enforced via GitHub setting)
+- **Allow squash merging only** — rebase and merge commits are disabled in repo settings
+- **No force pushes** — history is immutable once merged
+- **No branch deletion** — `main` cannot be deleted
+
+These settings are configured in GitHub repository settings under
+**Settings → Branches → Branch protection rules**.
 
 ---
 
