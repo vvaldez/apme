@@ -26,6 +26,16 @@ _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
     "M025": "play-level strategy not in OPA serializer options whitelist",
     "M028": "first_found is a lookup plugin; terms live inside Jinja2 expressions",
     "R402": "informational listing rule (no GraphRule equivalent yet)",
+    "L074": "role name check requires ROLE graph node; single-file harness has no role directory",
+    "L080": "requires file_path under roles/; single-file harness uses a temp path",
+    "L081": "checks file basename pattern; single-file harness uses a generated temp filename",
+    "L083": "requires file_path under roles/; single-file harness uses a temp path",
+    "L085": "requires file_path under roles/ with include modules; single-file harness uses a temp path",
+    "L077": "role metadata rule; example shows meta/main.yml, not playbook YAML",
+    "L095": "collection metadata rule; example shows galaxy.yml, not playbook YAML",
+    "L096": "collection metadata rule; example shows meta/runtime.yml, not playbook YAML",
+    "L105": "collection metadata rule; example shows galaxy.yml, not playbook YAML",
+    "M030": "ARI engine does not propagate when: to graph node when_expr",
 }
 
 

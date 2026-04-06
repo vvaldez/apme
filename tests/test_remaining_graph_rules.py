@@ -22,6 +22,11 @@ from apme_engine.engine.content_graph import (
 from apme_engine.engine.graph_scanner import scan
 from apme_engine.engine.models import YAMLDict
 from apme_engine.validators.native.rules.L056_sanity_graph import SanityGraphRule
+from apme_engine.validators.native.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
+from apme_engine.validators.native.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
+from apme_engine.validators.native.rules.L081_numbered_names_graph import NumberedNamesGraphRule
+from apme_engine.validators.native.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
+from apme_engine.validators.native.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
 from apme_engine.validators.native.rules.L087_collection_license_graph import CollectionLicenseGraphRule
 from apme_engine.validators.native.rules.L088_collection_readme_graph import CollectionReadmeGraphRule
 from apme_engine.validators.native.rules.L089_plugin_type_hints_graph import PluginTypeHintsGraphRule
@@ -31,6 +36,10 @@ from apme_engine.validators.native.rules.L096_meta_runtime_graph import MetaRunt
 from apme_engine.validators.native.rules.L103_galaxy_changelog_graph import GalaxyChangelogGraphRule
 from apme_engine.validators.native.rules.L104_galaxy_runtime_graph import GalaxyRuntimeGraphRule
 from apme_engine.validators.native.rules.L105_galaxy_repository_graph import GalaxyRepositoryGraphRule
+from apme_engine.validators.native.rules.M030_broken_conditional_expressions_graph import (
+    HAS_JINJA,
+    BrokenConditionalExpressionsGraphRule,
+)
 from apme_engine.validators.native.rules.R401_list_all_inbound_src_graph import ListAllInboundSrcGraphRule
 
 # ---------------------------------------------------------------------------
@@ -1205,3 +1214,487 @@ class TestSourceTreeCollectionRules:
         report = scan(graph, [SchemaValidationGraphRule()], owned_only=False)
         violations = [rr for nr in report.node_results for rr in nr.rule_results if rr.verdict]
         assert violations, "L095 should fire when namespace is missing from galaxy.yml"
+
+
+# ===========================================================================
+# L074 — NoDashesInRoleName
+# ===========================================================================
+
+
+def _make_role(
+    *,
+    name: str = "my_role",
+    role_fqcn: str = "",
+    file_path: str = "roles/my_role",
+) -> tuple[ContentGraph, str]:
+    """Build a graph with a single ROLE node.
+
+    Args:
+        name: Role display name.
+        role_fqcn: Fully-qualified collection name for the role.
+        file_path: File path for location metadata.
+
+    Returns:
+        Tuple of ``(graph, role_node_id)``.
+    """
+    g = ContentGraph()
+    node = ContentNode(
+        identity=NodeIdentity(path=file_path, node_type=NodeType.ROLE),
+        file_path=file_path,
+        name=name,
+        role_fqcn=role_fqcn,
+        scope=NodeScope.OWNED,
+    )
+    g.add_node(node)
+    return g, node.node_id
+
+
+class TestNoDashesInRoleNameGraphRule:
+    """Tests for L074 NoDashesInRoleNameGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> NoDashesInRoleNameGraphRule:
+        """Create a rule instance.
+
+        Returns:
+            A NoDashesInRoleNameGraphRule.
+        """
+        return NoDashesInRoleNameGraphRule()
+
+    def test_violation_dash_in_name(self, rule: NoDashesInRoleNameGraphRule) -> None:
+        """Role name with dashes triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_role(name="my-web-role")
+        assert rule.match(g, nid)
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert result.detail["role_name"] == "my-web-role"
+
+    def test_violation_dash_in_fqcn(self, rule: NoDashesInRoleNameGraphRule) -> None:
+        """Role FQCN with dashes triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_role(role_fqcn="ns.col.my-role")
+        assert rule.match(g, nid)
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_pass_underscore_name(self, rule: NoDashesInRoleNameGraphRule) -> None:
+        """Role name with underscores passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_role(name="my_web_role")
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_task_not_matched(self, rule: NoDashesInRoleNameGraphRule) -> None:
+        """TASK nodes are not matched by this rule.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        assert not rule.match(g, nid)
+
+
+# ===========================================================================
+# L080 — InternalVarPrefix
+# ===========================================================================
+
+
+class TestInternalVarPrefixGraphRule:
+    """Tests for L080 InternalVarPrefixGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> InternalVarPrefixGraphRule:
+        """Create a rule instance.
+
+        Returns:
+            An InternalVarPrefixGraphRule.
+        """
+        return InternalVarPrefixGraphRule()
+
+    def test_violation_unprefixed_var_in_role(self, rule: InternalVarPrefixGraphRule) -> None:
+        """set_fact with unprefixed key in role triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.set_fact",
+            module_options={"temp_value": "something"},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        assert rule.match(g, nid)
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        variables = result.detail["variables"]
+        assert isinstance(variables, list)
+        assert "temp_value" in variables
+
+    def test_pass_double_underscore_prefixed_var(self, rule: InternalVarPrefixGraphRule) -> None:
+        """set_fact with double-underscore-prefixed key passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.set_fact",
+            module_options={"__temp_value": "something"},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_pass_single_underscore_prefixed_var(self, rule: InternalVarPrefixGraphRule) -> None:
+        """set_fact with single-underscore-prefixed key also passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.set_fact",
+            module_options={"_temp_value": "something"},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_cacheable_key_ignored(self, rule: InternalVarPrefixGraphRule) -> None:
+        """The ``cacheable`` key is always allowed.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.set_fact",
+            module_options={"cacheable": True},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_not_matched_outside_role(self, rule: InternalVarPrefixGraphRule) -> None:
+        """set_fact outside roles/ is not matched.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.set_fact",
+            module_options={"temp_value": "something"},
+            file_path="playbooks/site.yml",
+        )
+        assert not rule.match(g, nid)
+
+
+# ===========================================================================
+# L081 — NumberedNames
+# ===========================================================================
+
+
+class TestNumberedNamesGraphRule:
+    """Tests for L081 NumberedNamesGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> NumberedNamesGraphRule:
+        """Create a rule instance.
+
+        Returns:
+            A NumberedNamesGraphRule.
+        """
+        return NumberedNamesGraphRule()
+
+    def test_violation_numbered_file(self, rule: NumberedNamesGraphRule) -> None:
+        """File named ``01_setup.yml`` triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="roles/myrole/tasks/01_setup.yml")
+        assert rule.match(g, nid)
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert result.detail["filename"] == "01_setup.yml"
+
+    def test_violation_dash_separator(self, rule: NumberedNamesGraphRule) -> None:
+        """File named ``02-main.yml`` triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="playbooks/02-main.yml")
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_pass_descriptive_name(self, rule: NumberedNamesGraphRule) -> None:
+        """Descriptive file name without leading digits passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="playbooks/setup.yml")
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_pass_version_prefix(self, rule: NumberedNamesGraphRule) -> None:
+        """Name like ``v1_setup.yml`` does not start with digit+separator.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="playbooks/v1_setup.yml")
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+
+# ===========================================================================
+# L083 — HardcodedGroup
+# ===========================================================================
+
+
+class TestHardcodedGroupGraphRule:
+    """Tests for L083 HardcodedGroupGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> HardcodedGroupGraphRule:
+        """Create a rule instance.
+
+        Returns:
+            A HardcodedGroupGraphRule.
+        """
+        return HardcodedGroupGraphRule()
+
+    def test_violation_hardcoded_group_in_role(self, rule: HardcodedGroupGraphRule) -> None:
+        """Hardcoded ``groups['db_servers']`` in a role triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="roles/myrole/tasks/main.yml")
+        node = g.get_node(nid)
+        assert node is not None
+        node.yaml_lines = "- name: Check group\n  when: inventory_hostname in groups['db_servers']\n"
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        groups = result.detail["found_groups"]
+        assert isinstance(groups, list)
+        assert "db_servers" in groups
+
+    def test_pass_variable_group(self, rule: HardcodedGroupGraphRule) -> None:
+        """Variable reference ``groups[target_group]`` passes (no quotes).
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="roles/myrole/tasks/main.yml")
+        node = g.get_node(nid)
+        assert node is not None
+        node.yaml_lines = "- name: Check group\n  when: inventory_hostname in groups[target_group]\n"
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_pass_outside_role(self, rule: HardcodedGroupGraphRule) -> None:
+        """Hardcoded groups outside roles/ passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="playbooks/site.yml")
+        node = g.get_node(nid)
+        assert node is not None
+        node.yaml_lines = "- name: Check group\n  when: groups['db_servers']\n"
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_all_ungrouped_filtered(self, rule: HardcodedGroupGraphRule) -> None:
+        """``groups['all']`` and ``groups['ungrouped']`` are filtered out.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(file_path="roles/myrole/tasks/main.yml")
+        node = g.get_node(nid)
+        assert node is not None
+        node.yaml_lines = "- name: Check\n  when: groups['all'] and groups['ungrouped']\n"
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+
+# ===========================================================================
+# L085 — RolePathInclude
+# ===========================================================================
+
+
+class TestRolePathIncludeGraphRule:
+    """Tests for L085 RolePathIncludeGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> RolePathIncludeGraphRule:
+        """Create a rule instance.
+
+        Returns:
+            A RolePathIncludeGraphRule.
+        """
+        return RolePathIncludeGraphRule()
+
+    def test_violation_jinja_without_role_path(self, rule: RolePathIncludeGraphRule) -> None:
+        """Include path with Jinja but no ``role_path`` triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.include_vars",
+            module_options={"file": "{{ platform }}/vars.yml"},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        assert rule.match(g, nid)
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert result.detail["include_path"] == "{{ platform }}/vars.yml"
+
+    def test_pass_with_role_path(self, rule: RolePathIncludeGraphRule) -> None:
+        """Include path containing ``role_path`` passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.include_vars",
+            module_options={"file": "{{ role_path }}/vars/{{ platform }}.yml"},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_pass_static_path(self, rule: RolePathIncludeGraphRule) -> None:
+        """Static include path (no Jinja) passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "tasks/setup.yml"},
+            file_path="roles/myrole/tasks/main.yml",
+        )
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_not_matched_outside_role(self, rule: RolePathIncludeGraphRule) -> None:
+        """include_vars outside roles/ is not matched.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(
+            module="ansible.builtin.include_vars",
+            module_options={"file": "{{ platform }}/vars.yml"},
+            file_path="playbooks/site.yml",
+        )
+        assert not rule.match(g, nid)
+
+
+# ===========================================================================
+# M030 — BrokenConditionalExpressions
+# ===========================================================================
+
+
+class TestBrokenConditionalExpressionsGraphRule:
+    """Tests for M030 BrokenConditionalExpressionsGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> BrokenConditionalExpressionsGraphRule:
+        """Create a rule instance.
+
+        Returns:
+            A BrokenConditionalExpressionsGraphRule.
+        """
+        return BrokenConditionalExpressionsGraphRule()
+
+    @pytest.mark.skipif(not HAS_JINJA, reason="jinja2 not installed")  # type: ignore[untyped-decorator]
+    def test_violation_broken_when(self, rule: BrokenConditionalExpressionsGraphRule) -> None:
+        """Unmatched parenthesis in ``when`` triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        node = g.get_node(nid)
+        assert node is not None
+        node.when_expr = "result.rc == 0 and ("
+        assert rule.match(g, nid)
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert "broken_conditions" in result.detail
+
+    @pytest.mark.skipif(not HAS_JINJA, reason="jinja2 not installed")  # type: ignore[untyped-decorator]
+    def test_pass_valid_when(self, rule: BrokenConditionalExpressionsGraphRule) -> None:
+        """Valid Jinja2 ``when`` expression passes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        node = g.get_node(nid)
+        assert node is not None
+        node.when_expr = "result.rc == 0"
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    @pytest.mark.skipif(not HAS_JINJA, reason="jinja2 not installed")  # type: ignore[untyped-decorator]
+    def test_pass_no_when(self, rule: BrokenConditionalExpressionsGraphRule) -> None:
+        """Task without ``when`` passes (empty scoped list).
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_not_matched_without_jinja(self, rule: BrokenConditionalExpressionsGraphRule) -> None:
+        """Without Jinja2, ``match`` always returns False.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        if HAS_JINJA:
+            pytest.skip("jinja2 is installed; cannot test HAS_JINJA=False path")
+        g, nid = _make_task()
+        assert not rule.match(g, nid)

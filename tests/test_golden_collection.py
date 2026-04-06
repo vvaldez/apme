@@ -17,7 +17,12 @@ import pytest
 from apme_engine.engine.content_graph import ContentGraph, GraphBuilder
 from apme_engine.engine.graph_scanner import scan
 from apme_engine.validators.native.rules.graph_rule_base import GraphRule
+from apme_engine.validators.native.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
 from apme_engine.validators.native.rules.L077_role_arg_specs_graph import RoleArgSpecsGraphRule
+from apme_engine.validators.native.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
+from apme_engine.validators.native.rules.L081_numbered_names_graph import NumberedNamesGraphRule
+from apme_engine.validators.native.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
+from apme_engine.validators.native.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
 from apme_engine.validators.native.rules.L087_collection_license_graph import CollectionLicenseGraphRule
 from apme_engine.validators.native.rules.L088_collection_readme_graph import CollectionReadmeGraphRule
 from apme_engine.validators.native.rules.L095_schema_validation_graph import SchemaValidationGraphRule
@@ -293,3 +298,171 @@ class TestL077RoleArgSpecs:
         """
         graph = _build_graph(collection_root)
         assert "L077" not in _violations_for(graph, [RoleArgSpecsGraphRule()])
+
+
+# ===========================================================================
+# L074 — NoDashesInRoleName
+# ===========================================================================
+
+
+class TestL074NoDashesInRoleName:
+    """L074: role names should not contain dashes."""
+
+    def test_fires_with_dashed_role_name(self, collection_root: Path) -> None:
+        """Renaming role directory to include dashes causes L074 to fire.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        src = collection_root / "roles" / "run"
+        dst = collection_root / "roles" / "my-web-role"
+        shutil.move(str(src), str(dst))
+        graph = _build_graph(collection_root)
+        assert "L074" in _violations_for(graph, [NoDashesInRoleNameGraphRule()])
+
+    def test_passes_without_dashes(self, collection_root: Path) -> None:
+        """Unmodified golden collection passes L074 (role named ``run``).
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        graph = _build_graph(collection_root)
+        assert "L074" not in _violations_for(graph, [NoDashesInRoleNameGraphRule()])
+
+
+# ===========================================================================
+# L080 — InternalVarPrefix
+# ===========================================================================
+
+
+class TestL080InternalVarPrefix:
+    """L080: internal role variables set via set_fact should use a leading underscore prefix."""
+
+    def test_fires_with_unprefixed_set_fact(self, collection_root: Path) -> None:
+        """Adding an unprefixed ``set_fact`` in a role task causes L080 to fire.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        tasks = collection_root / "roles" / "run" / "tasks" / "main.yml"
+        tasks.write_text(
+            "---\n- name: Set unprefixed variable\n  ansible.builtin.set_fact:\n    temp_value: something\n"
+        )
+        graph = _build_graph(collection_root)
+        assert "L080" in _violations_for(graph, [InternalVarPrefixGraphRule()])
+
+    def test_passes_with_prefixed_set_fact(self, collection_root: Path) -> None:
+        """``set_fact`` with underscore-prefixed key in a role passes L080.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        tasks = collection_root / "roles" / "run" / "tasks" / "main.yml"
+        tasks.write_text(
+            "---\n- name: Set prefixed variable\n  ansible.builtin.set_fact:\n    __temp_value: something\n"
+        )
+        graph = _build_graph(collection_root)
+        assert "L080" not in _violations_for(graph, [InternalVarPrefixGraphRule()])
+
+
+# ===========================================================================
+# L081 — NumberedNames
+# ===========================================================================
+
+
+class TestL081NumberedNames:
+    """L081: do not number roles or playbooks."""
+
+    def test_fires_with_numbered_role(self, collection_root: Path) -> None:
+        """Renaming role directory to ``01_setup`` causes L081 to fire on the ROLE node.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        src = collection_root / "roles" / "run"
+        dst = collection_root / "roles" / "01_setup"
+        shutil.move(str(src), str(dst))
+        graph = _build_graph(collection_root)
+        assert "L081" in _violations_for(graph, [NumberedNamesGraphRule()])
+
+    def test_passes_with_descriptive_name(self, collection_root: Path) -> None:
+        """Unmodified golden collection passes L081 (role named ``run``).
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        graph = _build_graph(collection_root)
+        assert "L081" not in _violations_for(graph, [NumberedNamesGraphRule()])
+
+
+# ===========================================================================
+# L083 — HardcodedGroup
+# ===========================================================================
+
+
+class TestL083HardcodedGroup:
+    """L083: do not hardcode host group names in roles."""
+
+    def test_fires_with_hardcoded_group(self, collection_root: Path) -> None:
+        """Adding ``groups['db_servers']`` in a role task causes L083 to fire.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        tasks = collection_root / "roles" / "run" / "tasks" / "main.yml"
+        tasks.write_text(
+            "---\n"
+            "- name: Check group membership\n"
+            "  ansible.builtin.debug:\n"
+            "    msg: host is a db server\n"
+            "  when: inventory_hostname in groups['db_servers']\n"
+        )
+        graph = _build_graph(collection_root)
+        assert "L083" in _violations_for(graph, [HardcodedGroupGraphRule()])
+
+    def test_passes_without_hardcoded_group(self, collection_root: Path) -> None:
+        """Unmodified golden collection passes L083 (no hardcoded groups).
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        graph = _build_graph(collection_root)
+        assert "L083" not in _violations_for(graph, [HardcodedGroupGraphRule()])
+
+
+# ===========================================================================
+# L085 — RolePathInclude
+# ===========================================================================
+
+
+class TestL085RolePathInclude:
+    """L085: use explicit ``role_path`` prefix in include paths within roles."""
+
+    def test_fires_without_role_path(self, collection_root: Path) -> None:
+        """Include path with Jinja but no ``role_path`` causes L085 to fire.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        tasks = collection_root / "roles" / "run" / "tasks" / "main.yml"
+        tasks.write_text(
+            '---\n- name: Include platform vars\n  ansible.builtin.include_vars:\n    file: "{{ platform }}/vars.yml"\n'
+        )
+        graph = _build_graph(collection_root)
+        assert "L085" in _violations_for(graph, [RolePathIncludeGraphRule()])
+
+    def test_passes_with_role_path(self, collection_root: Path) -> None:
+        """Include path containing ``role_path`` passes L085.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        tasks = collection_root / "roles" / "run" / "tasks" / "main.yml"
+        tasks.write_text(
+            "---\n"
+            "- name: Include platform vars\n"
+            "  ansible.builtin.include_vars:\n"
+            '    file: "{{ role_path }}/vars/{{ platform }}.yml"\n'
+        )
+        graph = _build_graph(collection_root)
+        assert "L085" not in _violations_for(graph, [RolePathIncludeGraphRule()])

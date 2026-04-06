@@ -11,4 +11,18 @@ Use `{{ role_path }}/...` prefix for include paths containing variables within r
 
 Only fires inside `roles/` directories for include_tasks/include_vars with variable paths.
 
-**Violation:** `file: "{{ platform }}/vars.yml"` in a role — **Pass:** `file: "{{ role_path }}/vars/{{ platform }}/vars.yml"`
+### Example: violation
+
+```yaml
+- name: Include platform vars without role_path
+  ansible.builtin.include_vars:
+    file: "{{ platform }}/vars.yml"
+```
+
+### Example: pass
+
+```yaml
+- name: Include platform vars with role_path
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/vars/{{ platform }}/vars.yml"
+```

@@ -11,8 +11,18 @@ Role names should not contain dashes as they cause issues with collection packag
 
 ### Example: violation
 
-Role directory named `my-web-role`.
+```yaml
+- name: Use role with dashes
+  hosts: localhost
+  roles:
+    - my-web-role
+```
 
 ### Example: pass
 
-Role directory named `my_web_role`.
+```yaml
+- name: Use role without dashes
+  hosts: localhost
+  roles:
+    - my_web_role
+```

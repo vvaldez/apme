@@ -11,8 +11,16 @@ Do not number roles or playbooks (e.g. `01_setup.yml`). Use descriptive names in
 
 ### Example: violation
 
-Playbook file named `01_setup.yml`.
+```yaml
+- name: Setup task in numbered file
+  ansible.builtin.debug:
+    msg: "This file is named 01_setup.yml"
+```
 
 ### Example: pass
 
-Playbook file named `setup.yml`.
+```yaml
+- name: Setup task in descriptive file
+  ansible.builtin.debug:
+    msg: "This file is named setup.yml"
+```

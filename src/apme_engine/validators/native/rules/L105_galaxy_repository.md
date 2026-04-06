@@ -11,6 +11,23 @@ The `galaxy.yml` file should include a `repository` key pointing to the source c
 
 Maps to ansible-lint `galaxy[no-repository]`.
 
-Requires collection-level target type not yet in the engine. Currently disabled.
+Applies to collection validation and checks the parsed `galaxy.yml` metadata on `COLLECTION` graph nodes.
 
-**Violation:** galaxy.yml without `repository` key — **Pass:** `repository: https://...`
+### Example: violation
+
+```yaml
+# galaxy.yml without repository key
+namespace: my_namespace
+name: my_collection
+version: 1.0.0
+```
+
+### Example: pass
+
+```yaml
+# galaxy.yml with repository key
+namespace: my_namespace
+name: my_collection
+version: 1.0.0
+repository: https://github.com/my_namespace/my_collection
+```

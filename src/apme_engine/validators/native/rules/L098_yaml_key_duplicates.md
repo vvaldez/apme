@@ -13,4 +13,25 @@ Maps to ansible-lint `yaml[key-duplicates]`.
 
 Requires raw YAML content before parsing. Uses `yaml_lines` when available.
 
-**Violation:** duplicate `name:` key in a mapping — **Pass:** unique keys
+### Example: violation
+
+```yaml
+- hosts: localhost
+  tasks:
+    - name: Install packages
+      ansible.builtin.dnf:
+        name: httpd
+        state: present
+        name: nginx
+```
+
+### Example: pass
+
+```yaml
+- hosts: localhost
+  tasks:
+    - name: Install packages
+      ansible.builtin.dnf:
+        name: httpd
+        state: present
+```

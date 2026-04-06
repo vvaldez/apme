@@ -7,7 +7,7 @@
 | Metric | Count |
 |--------|-------|
 | Implemented | 144/153 |
-| Tested | 98/153 |
+| Tested | 104/153 |
 | Documented | 152/153 |
 | Deterministic fixer | 24/153 |
 
@@ -84,18 +84,18 @@
 | L071 | OPA | info | Consider using template instead of copy with Jinja content. | Yes | Yes | Yes | — |
 | L072 | OPA | info | Consider setting backup true on template/copy tasks. | Yes | Yes | Yes | — |
 | L073 | Native | low | YAML should use 2-space indentation. | Yes | — | Yes | — |
-| L074 | Native | low | Role names should not contain dashes. | Yes | — | Yes | — |
+| L074 | Native | low | Role names should not contain dashes. | Yes | Yes | Yes | — |
 | L075 | Native | low | Template source files should use .j2 extension (ansible_managed best practice). | Yes | — | Yes | — |
 | L076 | Native | low | Use ansible_facts bracket notation instead of injected fact variables. | Yes | — | Yes | — |
 | L077 | Native | low | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
 | L078 | Native | low | Use bracket notation for dict key access in Jinja. | Yes | Yes | Yes | — |
 | L079 | Native | low | Role defaults/vars should be prefixed with the role name. | Yes | — | Yes | — |
-| L080 | Native | low | Internal role variables should be prefixed with __ (double underscore). | Yes | — | Yes | — |
-| L081 | Native | low | Do not number roles or playbooks. | Yes | — | Yes | — |
+| L080 | Native | low | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
+| L081 | Native | low | Do not number roles or playbooks. | Yes | Yes | Yes | — |
 | L082 | Native | low | Template source files should use .j2 extension. | Yes | — | Yes | — |
-| L083 | Native | low | Do not hardcode host group names in roles. | Yes | — | Yes | — |
+| L083 | Native | low | Do not hardcode host group names in roles. | Yes | Yes | Yes | — |
 | L084 | Native | low | Task names in included sub-task files should use a prefix. | Yes | — | Yes | — |
-| L085 | Native | low | Use explicit role_path prefix in include paths within roles. | Yes | — | Yes | — |
+| L085 | Native | low | Use explicit role_path prefix in include paths within roles. | Yes | Yes | Yes | — |
 | L086 | Native | low | Avoid playbook/play vars for routine config; use inventory vars. | Yes | — | Yes | — |
 | L087 | Native | low | Collection root should have a LICENSE or COPYING file. | Yes | Yes | Yes | — |
 | L088 | Native | low | Collection README should document supported ansible-core versions. | Yes | Yes | Yes | — |
@@ -106,7 +106,7 @@
 | L093 | Native | low | Do not override role defaults/vars with set_fact. | Yes | — | Yes | — |
 | L094 | Native | low | Do not put dynamic dates in templates; breaks change detection. | Yes | — | Yes | — |
 | L095 | Native | error | YAML file does not match expected schema structure. | Yes | Yes | Yes | — |
-| L096 | Native | high | meta/runtime.yml requires_ansible must be a valid version specifier. | Yes | Yes | Yes | — |
+| L096 | Native | high | meta/runtime.yml should declare requires_ansible. | Yes | Yes | Yes | — |
 | L097 | Native | low | Task names should be unique within a play. | Yes | — | Yes | — |
 | L098 | Native | error | YAML files should not have duplicate mapping keys. | Yes | Yes | Yes | — |
 | L099 | Native | info | Prefer double quotes for YAML string values. | Yes | Yes | Yes | — |
@@ -143,7 +143,7 @@
 | M027 | Native | low | Mixing inline k=v arguments with args: mapping is deprecated (2.23) | Yes | — | Yes | — |
 | M028 | OPA | high | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | M029 | Native | medium | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | — | — | Yes | — |
-| M030 | Native | medium | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | — | Yes | — |
+| M030 | Native | medium | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
 | P001 | Native | error | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | Native | error | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | Native | error | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -225,7 +225,7 @@
 | M028 | high | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (96 rules, 87 impl, 42 tested, 3 fixers)
+### Native (96 rules, 87 impl, 48 tested, 3 fixers)
 
 | Rule ID | Severity | Description | Impl | Tested | Doc | Fixer |
 |---------|----------|-------------|------|--------|-----|-------|
@@ -260,18 +260,18 @@
 | L056 | info | Path may match ignore pattern. | Yes | — | Yes | — |
 | L060 | info | Line too long (exceeds 160 characters). | Yes | Yes | Yes | — |
 | L073 | low | YAML should use 2-space indentation. | Yes | — | Yes | — |
-| L074 | low | Role names should not contain dashes. | Yes | — | Yes | — |
+| L074 | low | Role names should not contain dashes. | Yes | Yes | Yes | — |
 | L075 | low | Template source files should use .j2 extension (ansible_managed best practice). | Yes | — | Yes | — |
 | L076 | low | Use ansible_facts bracket notation instead of injected fact variables. | Yes | — | Yes | — |
 | L077 | low | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
 | L078 | low | Use bracket notation for dict key access in Jinja. | Yes | Yes | Yes | — |
 | L079 | low | Role defaults/vars should be prefixed with the role name. | Yes | — | Yes | — |
-| L080 | low | Internal role variables should be prefixed with __ (double underscore). | Yes | — | Yes | — |
-| L081 | low | Do not number roles or playbooks. | Yes | — | Yes | — |
+| L080 | low | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
+| L081 | low | Do not number roles or playbooks. | Yes | Yes | Yes | — |
 | L082 | low | Template source files should use .j2 extension. | Yes | — | Yes | — |
-| L083 | low | Do not hardcode host group names in roles. | Yes | — | Yes | — |
+| L083 | low | Do not hardcode host group names in roles. | Yes | Yes | Yes | — |
 | L084 | low | Task names in included sub-task files should use a prefix. | Yes | — | Yes | — |
-| L085 | low | Use explicit role_path prefix in include paths within roles. | Yes | — | Yes | — |
+| L085 | low | Use explicit role_path prefix in include paths within roles. | Yes | Yes | Yes | — |
 | L086 | low | Avoid playbook/play vars for routine config; use inventory vars. | Yes | — | Yes | — |
 | L087 | low | Collection root should have a LICENSE or COPYING file. | Yes | Yes | Yes | — |
 | L088 | low | Collection README should document supported ansible-core versions. | Yes | Yes | Yes | — |
@@ -282,7 +282,7 @@
 | L093 | low | Do not override role defaults/vars with set_fact. | Yes | — | Yes | — |
 | L094 | low | Do not put dynamic dates in templates; breaks change detection. | Yes | — | Yes | — |
 | L095 | error | YAML file does not match expected schema structure. | Yes | Yes | Yes | — |
-| L096 | high | meta/runtime.yml requires_ansible must be a valid version specifier. | Yes | Yes | Yes | — |
+| L096 | high | meta/runtime.yml should declare requires_ansible. | Yes | Yes | Yes | — |
 | L097 | low | Task names should be unique within a play. | Yes | — | Yes | — |
 | L098 | error | YAML files should not have duplicate mapping keys. | Yes | Yes | Yes | — |
 | L099 | info | Prefer double quotes for YAML string values. | Yes | Yes | Yes | — |
@@ -302,7 +302,7 @@
 | M026 | medium | Inventory variable names must be valid Python identifiers (enforced in 2.23) | Yes | — | Yes | — |
 | M027 | low | Mixing inline k=v arguments with args: mapping is deprecated (2.23) | Yes | — | Yes | — |
 | M029 | medium | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | — | — | Yes | — |
-| M030 | medium | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | — | Yes | — |
+| M030 | medium | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
 | P001 | error | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | error | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | error | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -358,7 +358,7 @@
 - **R404** (Native): Expose variable_set for the task.
 - **R501** (Native): Suggest collection/role dependency.
 
-### Implemented but untested — 49
+### Implemented but untested — 43
 
 - **L032** (Native): Variable redefinition may cause confusion.
 - **L033** (Native): Overriding vars without conditions.
@@ -370,16 +370,11 @@
 - **L055** (Native): Role meta video_links should be valid URLs.
 - **L056** (Native): Path may match ignore pattern.
 - **L073** (Native): YAML should use 2-space indentation.
-- **L074** (Native): Role names should not contain dashes.
 - **L075** (Native): Template source files should use .j2 extension (ansible_managed best practice).
 - **L076** (Native): Use ansible_facts bracket notation instead of injected fact variables.
 - **L079** (Native): Role defaults/vars should be prefixed with the role name.
-- **L080** (Native): Internal role variables should be prefixed with __ (double underscore).
-- **L081** (Native): Do not number roles or playbooks.
 - **L082** (Native): Template source files should use .j2 extension.
-- **L083** (Native): Do not hardcode host group names in roles.
 - **L084** (Native): Task names in included sub-task files should use a prefix.
-- **L085** (Native): Use explicit role_path prefix in include paths within roles.
 - **L086** (Native): Avoid playbook/play vars for routine config; use inventory vars.
 - **L089** (Native): Plugin Python files should include type hints.
 - **L090** (Native): Plugin entry files should be small; move helpers to module_utils.
@@ -400,7 +395,6 @@
 - **M022** (Native): tree and oneline callback plugins are removed in 2.23; choose an alternative
 - **M026** (Native): Inventory variable names must be valid Python identifiers (enforced in 2.23)
 - **M027** (Native): Mixing inline k=v arguments with args: mapping is deprecated (2.23)
-- **M030** (Native): Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored
 - **R103** (Native): Task downloads and executes (annotation-based).
 - **R105** (Native): Outbound transfer (annotation-based).
 - **R106** (Native): Inbound transfer (annotation-based).

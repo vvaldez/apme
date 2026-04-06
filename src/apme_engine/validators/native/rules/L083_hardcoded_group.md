@@ -11,4 +11,20 @@ Do not hardcode host group names in roles. Pass host list variables or parameter
 
 Only fires inside `roles/` directories. Checks `yaml_lines` for `groups['literal']` patterns.
 
-**Violation:** `groups['db_servers']` in a role — **Pass:** `groups[target_group_name]`
+### Example: violation
+
+```yaml
+- name: Check if host is in group
+  ansible.builtin.debug:
+    msg: "Host is a db server"
+  when: inventory_hostname in groups['db_servers']
+```
+
+### Example: pass
+
+```yaml
+- name: Check if host is in group
+  ansible.builtin.debug:
+    msg: "Host is in target group"
+  when: inventory_hostname in groups[target_group]
+```
