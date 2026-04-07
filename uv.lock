@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.11'",
@@ -8,14 +8,14 @@ resolution-markers = [
 
 [[package]]
 name = "abbenay-client"
-version = "2026.3.8a0"
-source = { url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.3.8-alpha/abbenay_client-2026.3.8a0-py3-none-any.whl" }
+version = "2026.4.1a0"
+source = { url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
 wheels = [
-    { url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.3.8-alpha/abbenay_client-2026.3.8a0-py3-none-any.whl", hash = "sha256:b4badd60cac70a12624febe02b791110f1bb1f7da872f10ff3992304496ae306" },
+    { url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl", hash = "sha256:8a473016b6b2d06c0620abb3d03f583b2b2c958654e293e8e66da70516e5dd33" },
 ]
 
 [package.metadata]
@@ -117,7 +117,7 @@ gateway = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abbenay-client", marker = "extra == 'ai'", url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.3.8-alpha/abbenay_client-2026.3.8a0-py3-none-any.whl" },
+    { name = "abbenay-client", marker = "extra == 'ai'", url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl" },
     { name = "aiosqlite", marker = "extra == 'gateway'", specifier = ">=0.20" },
     { name = "fastapi", specifier = ">=0.100" },
     { name = "filelock" },
