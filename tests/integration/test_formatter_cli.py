@@ -1,7 +1,11 @@
 """CLI integration tests for the format and remediate subcommands.
 
 Exercises the full CLI pipeline via subprocess against a messy YAML fixture.
-No containers required — runs in the normal test suite.
+Requires the daemon infrastructure managed by the integration conftest.
+
+Run with::
+
+    pytest -m integration tests/integration/test_formatter_cli.py -v
 """
 
 import shutil
@@ -13,8 +17,10 @@ import pytest
 
 from apme_engine.cli._exit_codes import EXIT_ERROR
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = REPO_ROOT / "tests" / "integration" / "test_format_playbook.yml"
+pytestmark = pytest.mark.integration
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+FIXTURE = Path(__file__).resolve().parent / "test_format_playbook.yml"
 
 
 def _cli(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
