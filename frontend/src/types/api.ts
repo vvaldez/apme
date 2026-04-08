@@ -350,3 +350,18 @@ export interface RuleStats {
   by_source: Record<string, number>;
   override_count: number;
 }
+
+// ── Notification types ───────────────────────────────────────────────
+
+export interface NotificationItem {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  variant: 'success' | 'danger' | 'warning' | 'info';
+  project_id: string | null;
+  scan_id: string | null;
+  link: string;
+  created_at: string;
+  read: boolean;
+}

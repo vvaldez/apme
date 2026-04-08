@@ -490,3 +490,40 @@ class ScanGraph(Base):
     edge_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     scan: Mapped[Scan] = relationship(back_populates="graph")
+
+
+# ── Notification table ─────────────────────────────────────────────────
+
+
+class Notification(Base):
+    """A user-facing notification generated from engine events.
+
+    Notifications are created by the Gateway when it processes incoming
+    ``FixCompletedEvent`` messages.  They drive the UI notification drawer
+    and toast alerts, and are delivered in real-time via SSE.
+
+    Attributes:
+        id: Auto-increment primary key.
+        type: Event category (scan_complete, secrets_detected, health_changed).
+        title: Short headline for the notification.
+        message: Longer descriptive body text.
+        variant: PatternFly alert variant (success, danger, warning, info).
+        project_id: Optional FK to the project that triggered the event.
+        scan_id: Optional FK to the scan that triggered the event.
+        link: Client-side route for click-through (e.g. ``/activity/{id}``).
+        created_at: ISO 8601 creation timestamp.
+        read: Whether the user has marked this notification as read.
+    """
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    variant: Mapped[str] = mapped_column(Text, nullable=False, default="info")
+    project_id: Mapped[str | None] = mapped_column(Text, ForeignKey("projects.id"), nullable=True)
+    scan_id: Mapped[str | None] = mapped_column(Text, ForeignKey("scans.scan_id"), nullable=True)
+    link: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

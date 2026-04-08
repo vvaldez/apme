@@ -3,6 +3,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { PageApp, PageFramework } from '@ansible/ansible-ui-framework';
 import { ApmeMasthead } from './components/ApmeMasthead';
 import { useApmeNavigation } from './hooks/useApmeNavigation';
+import { useNotificationStream } from './hooks/useNotificationStream';
 
 export function App() {
   return (
@@ -18,6 +19,7 @@ export function App() {
 
 function ApmeApp() {
   const navigation = useApmeNavigation();
+  useNotificationStream();
   return (
     <PageApp
       masthead={<ApmeMasthead />}

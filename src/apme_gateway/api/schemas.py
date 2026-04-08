@@ -294,7 +294,13 @@ class PaginatedResponse(BaseModel):  # type: ignore[misc]
     total: int
     limit: int
     offset: int
-    items: list[SessionSummary] | list[ActivitySummary] | list[TopViolation] | list[ProjectSummary]
+    items: (
+        list[SessionSummary]
+        | list[ActivitySummary]
+        | list[TopViolation]
+        | list[ProjectSummary]
+        | list[NotificationSchema]
+    )
 
 
 class AiModelInfo(BaseModel):  # type: ignore[misc]
@@ -786,3 +792,31 @@ class ProjectRanking(BaseModel):  # type: ignore[misc]
     scan_count: int
     last_scanned_at: str | None = None
     days_since_last_scan: int | None = None
+
+
+class NotificationSchema(BaseModel):  # type: ignore[misc]
+    """A user-facing notification.
+
+    Attributes:
+        id: Notification primary key.
+        type: Event category (scan_complete, secrets_detected, health_changed).
+        title: Short headline.
+        message: Descriptive body text.
+        variant: PatternFly alert variant (success, danger, warning, info).
+        project_id: Optional project FK.
+        scan_id: Optional scan FK.
+        link: Client-side route for click-through.
+        created_at: ISO 8601 creation timestamp.
+        read: Whether the user has marked this as read.
+    """
+
+    id: int
+    type: str
+    title: str
+    message: str
+    variant: str
+    project_id: str | None = None
+    scan_id: str | None = None
+    link: str = ""
+    created_at: str
+    read: bool

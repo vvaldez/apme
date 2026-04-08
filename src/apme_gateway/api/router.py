@@ -14,11 +14,11 @@ import contextlib
 import logging
 import os
 import uuid
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
@@ -43,6 +43,7 @@ from apme_gateway.api.schemas import (
     GalaxyServerSchema,
     HealthStatus,
     LogEntry,
+    NotificationSchema,
     PaginatedResponse,
     PatchDetail,
     ProjectDependencies,
@@ -1980,6 +1981,118 @@ async def delete_rule_config(rule_id: str) -> None:
         raise HTTPException(status_code=404, detail="No override configured for this rule")
 
 
+# ── Notifications ────────────────────────────────────────────────────
+
+
+@router.get("/notifications")  # type: ignore[untyped-decorator]
+async def list_notifications_endpoint(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    unread_only: bool = Query(default=False),
+) -> PaginatedResponse:
+    """Return notifications ordered newest-first.
+
+    Args:
+        limit: Page size.
+        offset: Row offset.
+        unread_only: When True, return only unread notifications.
+
+    Returns:
+        Paginated list of notifications.
+    """
+    async with get_session() as db:
+        rows, total = await q.list_notifications(db, limit=limit, offset=offset, unread_only=unread_only)
+    items = [
+        NotificationSchema(
+            id=n.id,
+            type=n.type,
+            title=n.title,
+            message=n.message,
+            variant=n.variant,
+            project_id=n.project_id,
+            scan_id=n.scan_id,
+            link=n.link,
+            created_at=n.created_at,
+            read=n.read,
+        )
+        for n in rows
+    ]
+    return PaginatedResponse(total=total, limit=limit, offset=offset, items=items)
+
+
+@router.patch("/notifications/{notification_id}/read")  # type: ignore[untyped-decorator]
+async def mark_notification_read_endpoint(notification_id: int) -> JSONResponse:
+    """Mark a single notification as read.
+
+    Args:
+        notification_id: Notification PK.
+
+    Returns:
+        JSON acknowledgement.
+
+    Raises:
+        HTTPException: 404 if notification not found.
+    """
+    async with get_session() as db:
+        ok = await q.mark_notification_read(db, notification_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return JSONResponse(content={"ok": True})
+
+
+@router.post("/notifications/read-all")  # type: ignore[untyped-decorator]
+async def mark_all_notifications_read_endpoint() -> JSONResponse:
+    """Mark all unread notifications as read.
+
+    Returns:
+        JSON with the count of updated rows.
+    """
+    async with get_session() as db:
+        count = await q.mark_all_notifications_read(db)
+    return JSONResponse(content={"updated": count})
+
+
+@router.delete("/notifications/{notification_id}", status_code=204)  # type: ignore[untyped-decorator]
+async def delete_notification_endpoint(notification_id: int) -> None:
+    """Delete a single notification.
+
+    Args:
+        notification_id: Notification PK.
+
+    Raises:
+        HTTPException: 404 if notification not found.
+    """
+    async with get_session() as db:
+        ok = await q.delete_notification(db, notification_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
+
+@router.get("/notifications/stream")  # type: ignore[untyped-decorator]
+async def notification_stream() -> StreamingResponse:
+    """SSE stream for real-time notification delivery.
+
+    Clients connect with ``EventSource`` and receive JSON notification
+    payloads as ``data:`` lines.  The connection stays open until the
+    client disconnects.
+
+    Returns:
+        Streaming SSE response.
+    """
+    from apme_gateway.notifications import sse_event_stream, subscribe, unsubscribe  # noqa: PLC0415
+
+    queue = subscribe()
+
+    async def _stream() -> AsyncIterator[str]:
+        try:
+            async for chunk in sse_event_stream(queue):
+                yield chunk
+        finally:
+            unsubscribe(queue)
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
 # ── Project WebSocket (ADR-037) ──────────────────────────────────────
 
 
@@ -2240,7 +2353,21 @@ async def project_operate_ws(
                 )
                 if captured_patches:
                     await q.store_patches(db, completed_scan_id, captured_patches)
-                await q.update_project_health(db, proj.id)
+                old_hs = proj.health_score
+                new_hs = await q.update_project_health(db, proj.id)
+
+                scan_row = await q.get_scan(db, completed_scan_id)
+                if scan_row is not None:
+                    from apme_gateway.notifications import generate_notifications  # noqa: PLC0415
+
+                    await generate_notifications(
+                        db,
+                        scan_row,
+                        list(scan_row.violations),
+                        old_health_score=old_hs,
+                        new_health_score=new_hs,
+                    )
+                    await db.commit()
 
         await websocket.send_json({"type": "closed"})
     except WebSocketDisconnect:

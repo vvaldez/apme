@@ -112,6 +112,8 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                 _add_manifest(db, request.scan_id, request.manifest)
                 _add_graph(db, request.scan_id, request.content_graph_json)
                 await db.commit()
+
+                await _generate_scan_notifications(db, scan, request)
         except Exception:
             logger.exception("Failed to persist remediate event %s", request.scan_id)
             await context.abort(grpc.StatusCode.INTERNAL, "Persistence failure")
@@ -434,3 +436,39 @@ def _add_graph(db: AsyncSession, scan_id: str, content_graph_json: str) -> None:
             edge_count=edge_count,
         )
     )
+
+
+async def _generate_scan_notifications(
+    db: AsyncSession,
+    scan: Scan,
+    request: reporting_pb2.FixCompletedEvent,
+) -> None:
+    """Create notifications from a persisted scan event (best-effort).
+
+    Builds lightweight Violation-like objects from the proto data for the
+    notification generator to inspect, then delegates to
+    :func:`apme_gateway.notifications.generate_notifications`.
+
+    Args:
+        db: Active async database session.
+        scan: The committed Scan ORM row.
+        request: Original gRPC event (for violation proto access).
+    """
+    try:
+        from apme_gateway.notifications import generate_notifications  # noqa: PLC0415
+
+        all_protos = list(request.remaining_violations) + list(request.fixed_violations)
+        stub_violations = [
+            Violation(
+                scan_id=scan.scan_id,
+                rule_id=v.rule_id,
+                level="",
+                message="",
+                file=v.file,
+            )
+            for v in all_protos
+        ]
+        await generate_notifications(db, scan, stub_violations)
+        await db.commit()
+    except Exception:
+        logger.warning("Notification generation failed for scan %s", scan.scan_id, exc_info=True)

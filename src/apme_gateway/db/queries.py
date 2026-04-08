@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from apme_gateway.db.models import (
     GalaxyServer,
+    Notification,
     PatchedFile,
     Project,
     Proposal,
@@ -1956,3 +1957,142 @@ async def project_graph(db: AsyncSession, project_id: str) -> ScanGraph | None:
     stmt = select(ScanGraph).where(ScanGraph.scan_id == scan_id)
     result = await db.execute(stmt)
     return cast("ScanGraph | None", result.scalar_one_or_none())
+
+
+# ---------------------------------------------------------------------------
+# Notification queries
+# ---------------------------------------------------------------------------
+
+
+async def insert_notification(
+    db: AsyncSession,
+    *,
+    type: str,
+    title: str,
+    message: str = "",
+    variant: str = "info",
+    project_id: str | None = None,
+    scan_id: str | None = None,
+    link: str = "",
+) -> Notification:
+    """Create a new notification row.
+
+    Args:
+        db: Active async database session.
+        type: Event category.
+        title: Short headline.
+        message: Body text.
+        variant: PatternFly alert variant.
+        project_id: Optional project FK.
+        scan_id: Optional scan FK.
+        link: Client-side route for click-through.
+
+    Returns:
+        The newly created Notification row.
+    """
+    now = datetime.now(tz=timezone.utc).isoformat()
+    notif = Notification(
+        type=type,
+        title=title,
+        message=message,
+        variant=variant,
+        project_id=project_id,
+        scan_id=scan_id,
+        link=link,
+        created_at=now,
+        read=False,
+    )
+    db.add(notif)
+    await db.flush()
+    return notif
+
+
+async def list_notifications(
+    db: AsyncSession,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    unread_only: bool = False,
+) -> tuple[list[Notification], int]:
+    """Return notifications ordered newest-first.
+
+    Args:
+        db: Active async database session.
+        limit: Page size.
+        offset: Row offset.
+        unread_only: When True, return only unread notifications.
+
+    Returns:
+        Tuple of (notification rows, total count).
+    """
+    base = select(Notification)
+    if unread_only:
+        base = base.where(Notification.read.is_(False))
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = cast(int, (await db.execute(count_stmt)).scalar_one())
+
+    stmt = base.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(stmt)
+    return list(result.scalars().all()), total
+
+
+async def mark_notification_read(
+    db: AsyncSession,
+    notification_id: int,
+    *,
+    read: bool = True,
+) -> bool:
+    """Set the read flag on a single notification.
+
+    Args:
+        db: Active async database session.
+        notification_id: PK of the notification.
+        read: Target read state.
+
+    Returns:
+        True if the row was found and updated.
+    """
+    from sqlalchemy import update
+
+    stmt = update(Notification).where(Notification.id == notification_id).values(read=read)
+    result = await db.execute(stmt)
+    await db.commit()
+    return bool(result.rowcount)
+
+
+async def mark_all_notifications_read(db: AsyncSession) -> int:
+    """Mark every unread notification as read.
+
+    Args:
+        db: Active async database session.
+
+    Returns:
+        Number of rows updated.
+    """
+    from sqlalchemy import update
+
+    stmt = update(Notification).where(Notification.read.is_(False)).values(read=True)
+    result = await db.execute(stmt)
+    await db.commit()
+    return cast(int, result.rowcount)
+
+
+async def delete_notification(db: AsyncSession, notification_id: int) -> bool:
+    """Delete a single notification.
+
+    Args:
+        db: Active async database session.
+        notification_id: PK of the notification.
+
+    Returns:
+        True if the row was found and deleted.
+    """
+    stmt = select(Notification).where(Notification.id == notification_id)
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return False
+    await db.delete(row)
+    await db.commit()
+    return True

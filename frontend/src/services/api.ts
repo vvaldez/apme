@@ -14,6 +14,7 @@ import type {
   DepHealthSummary,
   GalaxyServer,
   HealthStatus,
+  NotificationItem,
   PaginatedResponse,
   ProjectDependencies,
   ProjectDetail,
@@ -379,4 +380,31 @@ export async function deleteRuleConfig(ruleId: string): Promise<void> {
 
 export function getRuleStats(): Promise<RuleStats> {
   return request("/rules/stats");
+}
+
+// ── Notifications ───────────────────────────────────────────────────────
+
+export function listNotifications(
+  limit = 50,
+  offset = 0,
+  unreadOnly = false,
+): Promise<PaginatedResponse<NotificationItem>> {
+  let url = `/notifications?limit=${limit}&offset=${offset}`;
+  if (unreadOnly) url += "&unread_only=true";
+  return request(url);
+}
+
+export async function markNotificationRead(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/notifications/${id}/read`, { method: "PATCH" });
+  if (!res.ok) throw new Error(`${res.status}`);
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  const res = await fetch(`${BASE}/notifications/read-all`, { method: "POST" });
+  if (!res.ok) throw new Error(`${res.status}`);
+}
+
+export async function deleteNotification(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/notifications/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`${res.status}`);
 }
