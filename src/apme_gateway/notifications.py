@@ -45,7 +45,7 @@ def _broadcast(payload: dict[str, Any]) -> None:
     Args:
         payload: JSON-serialisable notification dict.
     """
-    for q in _subscribers:
+    for q in tuple(_subscribers):
         try:
             q.put_nowait(payload)
         except asyncio.QueueFull:

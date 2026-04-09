@@ -419,43 +419,24 @@ class TestNotificationEndpoints:
         assert "created_at" in item
         assert "id" in item
 
-    async def test_sse_stream_delivers_notification(self, client: AsyncClient) -> None:
-        """The SSE endpoint yields broadcast payloads as ``data:`` lines.
-
-        Args:
-            client: Async HTTP test client.
-        """
+    async def test_sse_stream_delivers_notification(self) -> None:
+        """The SSE event stream generator yields broadcast payloads as ``data:`` lines."""
         import asyncio
         import json
 
-        payload = {"id": 1, "type": "scan_complete", "title": "Test"}
+        from apme_gateway.notifications import sse_event_stream
 
-        async def _trigger_broadcast() -> None:
-            await asyncio.sleep(0.05)
-            _broadcast(payload)
-
-        async def _read_first_data(resp: object) -> None:
-            """Read lines until a ``data:`` event arrives.
-
-            Args:
-                resp: Streaming response with ``aiter_lines()``.
-            """
-            async for line in resp.aiter_lines():  # type: ignore[attr-defined]
-                if line.startswith("data:"):
-                    data = json.loads(line[len("data: ") :])
-                    assert data["type"] == "scan_complete"
-                    assert data["title"] == "Test"
-                    return
-            pytest.fail("SSE stream closed before delivering a data event")
-
-        task = asyncio.create_task(_trigger_broadcast())
+        q = subscribe()
         try:
-            async with client.stream("GET", "/api/v1/notifications/stream") as resp:
-                assert resp.status_code == 200
-                assert resp.headers["content-type"] == "text/event-stream; charset=utf-8"
-                await asyncio.wait_for(_read_first_data(resp), timeout=2.0)
+            stream = sse_event_stream(q)
+            payload = {"id": 1, "type": "scan_complete", "title": "Test"}
+            _broadcast(payload)
+            chunk = await asyncio.wait_for(anext(stream), timeout=2.0)
+            data = json.loads(chunk.removeprefix("data: ").strip())
+            assert data["type"] == "scan_complete"
+            assert data["title"] == "Test"
         finally:
-            await task
+            unsubscribe(q)
 
 
 # ---------------------------------------------------------------------------

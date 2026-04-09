@@ -129,9 +129,15 @@ export function useNotificationStream(): void {
         const resp = await listNotifications(100, 0);
         if (!mountedRef.current) return;
 
+        // Switch to live mode before draining the buffer so any events
+        // arriving from this point forward go through handleSseItem
+        // instead of accumulating in the buffer.
+        restLoaded = true;
+
         const restIds = new Set(resp.items.map((n) => n.id));
         const merged = [...resp.items];
-        for (const buffered of buffer) {
+        const pending = buffer.splice(0);
+        for (const buffered of pending) {
           if (!restIds.has(buffered.id)) {
             merged.unshift(buffered);
           }
@@ -139,7 +145,7 @@ export function useNotificationStream(): void {
 
         setNotificationGroups(() => buildGroups(merged));
 
-        for (const buffered of buffer) {
+        for (const buffered of pending) {
           if (!restIds.has(buffered.id)) {
             const timeout = NO_DISMISS_TYPES.has(buffered.type) ? undefined : 8000;
             alertToaster.addAlert({
@@ -155,10 +161,9 @@ export function useNotificationStream(): void {
         }
       } catch {
         // Gateway may be unavailable — silent degradation
+        restLoaded = true;
         if (!mountedRef.current) return;
       }
-
-      restLoaded = true;
     };
 
     void startStream();
