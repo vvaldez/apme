@@ -2,6 +2,11 @@
  * Hook that loads notifications from the Gateway REST API, connects to the
  * SSE stream for real-time updates, and pushes everything into the vendored
  * notification drawer (zustand) and alert toaster (context) stores.
+ *
+ * To avoid a gap between the initial REST load and SSE subscription, the
+ * EventSource opens first and buffers incoming events.  After the REST
+ * response arrives, buffered items are merged (id-based dedupe) so no
+ * notification is lost.
  */
 
 import { useEffect, useRef } from 'react';
@@ -54,7 +59,11 @@ function mergeNotification(
   const group = next[key]
     ? { ...next[key], notifications: [...next[key].notifications] }
     : { title: key, notifications: [] };
-  group.notifications.unshift(toPageNotification(item));
+
+  const strId = String(item.id);
+  if (!group.notifications.some((n) => n.id === strId)) {
+    group.notifications.unshift(toPageNotification(item));
+  }
   next[key] = group;
   return next;
 }
@@ -71,36 +80,20 @@ export function useNotificationStream(): void {
     let es: EventSource | undefined;
 
     const startStream = async () => {
-      try {
-        const resp = await listNotifications(100, 0);
-        if (!mountedRef.current) return;
-        setNotificationGroups(() => buildGroups(resp.items));
-      } catch {
-        // Gateway may be unavailable — silent degradation
-        if (!mountedRef.current) return;
-      }
-
-      if (!mountedRef.current) return;
+      // Buffer SSE events that arrive before the REST load completes.
+      const buffer: NotificationItem[] = [];
+      let restLoaded = false;
 
       const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
       const sseUrl = `${proto}//${window.location.host}/api/v1/notifications/stream`;
       es = new EventSource(sseUrl);
 
-      es.onmessage = (event) => {
-        if (!mountedRef.current) return;
-        let item: NotificationItem;
-        try {
-          item = JSON.parse(event.data as string) as NotificationItem;
-        } catch {
-          return;
-        }
-
+      const handleSseItem = (item: NotificationItem) => {
         setNotificationGroups((prev) => mergeNotification(prev, item));
 
         const timeout = NO_DISMISS_TYPES.has(item.type) ? undefined : 8000;
-        const alertKey = `notif-${item.id}`;
         alertToaster.addAlert({
-          key: alertKey,
+          key: `notif-${item.id}`,
           title: item.title,
           children: item.message,
           variant: item.variant,
@@ -111,9 +104,61 @@ export function useNotificationStream(): void {
         markNotificationRead(item.id).catch(() => {});
       };
 
+      es.onmessage = (event) => {
+        if (!mountedRef.current) return;
+        let item: NotificationItem;
+        try {
+          item = JSON.parse(event.data as string) as NotificationItem;
+        } catch {
+          return;
+        }
+
+        if (!restLoaded) {
+          buffer.push(item);
+          return;
+        }
+
+        handleSseItem(item);
+      };
+
       es.onerror = () => {
         // EventSource auto-reconnects — nothing to do
       };
+
+      try {
+        const resp = await listNotifications(100, 0);
+        if (!mountedRef.current) return;
+
+        const restIds = new Set(resp.items.map((n) => n.id));
+        const merged = [...resp.items];
+        for (const buffered of buffer) {
+          if (!restIds.has(buffered.id)) {
+            merged.unshift(buffered);
+          }
+        }
+
+        setNotificationGroups(() => buildGroups(merged));
+
+        for (const buffered of buffer) {
+          if (!restIds.has(buffered.id)) {
+            const timeout = NO_DISMISS_TYPES.has(buffered.type) ? undefined : 8000;
+            alertToaster.addAlert({
+              key: `notif-${buffered.id}`,
+              title: buffered.title,
+              children: buffered.message,
+              variant: buffered.variant,
+              timeout,
+              actionClose: undefined,
+            });
+            markNotificationRead(buffered.id).catch(() => {});
+          }
+        }
+      } catch {
+        // Gateway may be unavailable — silent degradation
+        if (!mountedRef.current) return;
+      }
+
+      restLoaded = true;
     };
 
     void startStream();

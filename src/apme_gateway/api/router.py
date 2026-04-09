@@ -2385,11 +2385,12 @@ async def project_operate_ws(
                 )
                 if captured_patches:
                     await q.store_patches(db, completed_scan_id, captured_patches)
-                old_hs = proj.health_score
-                new_hs = await q.update_project_health(db, proj.id)
-
                 scan_row = await q.get_scan(db, completed_scan_id)
+                old_hs = proj.health_score
                 if scan_row is not None:
+                    new_hs = q.compute_health_score(list(scan_row.violations))
+                    proj.health_score = new_hs
+
                     from apme_gateway.notifications import (  # noqa: PLC0415
                         broadcast_notifications,
                         generate_notifications,
@@ -2404,6 +2405,8 @@ async def project_operate_ws(
                     )
                     await db.commit()
                     broadcast_notifications(notif_payloads)
+                else:
+                    await q.update_project_health(db, proj.id)
 
         await websocket.send_json({"type": "closed"})
     except WebSocketDisconnect:
