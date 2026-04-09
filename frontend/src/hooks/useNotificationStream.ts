@@ -65,7 +65,6 @@ export function useNotificationStream(): void {
   const { setNotificationGroups } = usePageNotifications();
   const alertToaster = usePageAlertToaster();
   const mountedRef = useRef(true);
-  const itemCacheRef = useRef<NotificationItem[]>([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -74,7 +73,6 @@ export function useNotificationStream(): void {
     listNotifications(100, 0)
       .then((resp) => {
         if (!mountedRef.current) return;
-        itemCacheRef.current = resp.items;
         setNotificationGroups(() => buildGroups(resp.items));
       })
       .catch(() => {
@@ -95,7 +93,6 @@ export function useNotificationStream(): void {
         return;
       }
 
-      itemCacheRef.current = [item, ...itemCacheRef.current];
       setNotificationGroups((prev) => mergeNotification(prev, item));
 
       const timeout = NO_DISMISS_TYPES.has(item.type) ? undefined : 8000;

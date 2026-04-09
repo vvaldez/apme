@@ -2086,11 +2086,15 @@ async def notification_stream() -> StreamingResponse:
 
     async def _stream() -> AsyncIterator[str]:
         stream = sse_event_stream(queue)
+
+        async def _next_chunk() -> str:
+            return await anext(stream)
+
         pending_chunk: asyncio.Task[str] | None = None
         try:
             while True:
                 if pending_chunk is None:
-                    pending_chunk = asyncio.ensure_future(anext(stream))  # type: ignore[arg-type]
+                    pending_chunk = asyncio.create_task(_next_chunk())
                 done, _ = await asyncio.wait({pending_chunk}, timeout=15.0)
                 if pending_chunk not in done:
                     yield ": keep-alive\n\n"

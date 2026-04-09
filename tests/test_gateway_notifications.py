@@ -433,17 +433,31 @@ class TestNotificationEndpoints:
             await asyncio.sleep(0.05)
             _broadcast(payload)
 
-        asyncio.get_event_loop().create_task(_trigger_broadcast())
+        async def _read_first_data(resp: object) -> None:
+            """Read lines until a ``data:`` event arrives.
 
-        async with client.stream("GET", "/api/v1/notifications/stream") as resp:
-            assert resp.status_code == 200
-            assert resp.headers["content-type"] == "text/event-stream; charset=utf-8"
-            async for line in resp.aiter_lines():
+            Args:
+                resp: Streaming response with ``aiter_lines()``.
+
+            Raises:
+                AssertionError: If stream closes without a data event.
+            """
+            async for line in resp.aiter_lines():  # type: ignore[attr-defined]
                 if line.startswith("data:"):
                     data = json.loads(line[len("data: "):])
                     assert data["type"] == "scan_complete"
                     assert data["title"] == "Test"
-                    break
+                    return
+            pytest.fail("SSE stream closed before delivering a data event")
+
+        task = asyncio.create_task(_trigger_broadcast())
+        try:
+            async with client.stream("GET", "/api/v1/notifications/stream") as resp:
+                assert resp.status_code == 200
+                assert resp.headers["content-type"] == "text/event-stream; charset=utf-8"
+                await asyncio.wait_for(_read_first_data(resp), timeout=2.0)
+        finally:
+            await task
 
 
 # ---------------------------------------------------------------------------
