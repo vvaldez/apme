@@ -240,9 +240,11 @@ class ViolationRecord:
 
     Status transitions::
 
-        open ──→ fixed      (deterministic transform, auto-approved)
+        open ──→ fixed          (deterministic transform, auto-approved)
           │
-          └──→ proposed     (AI fix applied, pending human review)
+          ├──→ ai_abstained     (AI attempted but could not produce a fix)
+          │
+          └──→ proposed         (AI fix applied, pending human review)
                   │
                   ├──→ fixed    (user approved)
                   │
@@ -251,7 +253,8 @@ class ViolationRecord:
     Attributes:
         key: ``(node_id, normalized_rule_id)`` identity.
         violation: Original violation dict from the validator.
-        status: ``"open"``, ``"fixed"``, ``"proposed"``, or ``"declined"``.
+        status: ``"open"``, ``"fixed"``, ``"proposed"``, ``"declined"``,
+            or ``"ai_abstained"``.
         fixed_by: How the violation was resolved
             (``"deterministic"``, ``"ai"``, or ``None``).
         fixed_in_pass: Convergence pass that resolved the violation.
@@ -801,6 +804,8 @@ class ContentGraph:
                     status="open",
                     discovered_in_pass=pass_number,
                 )
+            elif existing.status == "ai_abstained":
+                existing.violation = v
             elif existing.status in ("fixed", "proposed", "declined"):
                 existing.status = "open"
                 existing.violation = v
@@ -849,6 +854,44 @@ class ContentGraph:
                 record.status = status
                 record.fixed_by = fixed_by
                 record.fixed_in_pass = pass_number
+                count += 1
+        return count
+
+    def abstain_violations(
+        self,
+        node_id: str,
+        rule_ids: frozenset[str],
+    ) -> int:
+        """Transition ``open`` violations to ``ai_abstained`` on a node.
+
+        Called when the AI attempted violations on this node but could
+        not produce a fix (returned ``None`` or ``AISkipped``).
+
+        ``fixed_in_pass`` is intentionally **not** set because
+        ``ai_abstained`` is not a resolution — the violation remains
+        open for manual review.
+
+        The ``remediation_resolution`` is stamped by
+        :meth:`query_violations` at query time based on
+        ``ViolationRecord.status`` — no dict mutation here.
+
+        Args:
+            node_id: Graph node whose violations to mark.
+            rule_ids: Set of normalized rule IDs the AI abstained from.
+
+        Returns:
+            Number of violations transitioned to ``ai_abstained``.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return 0
+        count = 0
+        for record in node.violation_ledger.values():
+            if record.status != "open":
+                continue
+            _, rule_id = record.key
+            if rule_id in rule_ids:
+                record.status = "ai_abstained"
                 count += 1
         return count
 
@@ -906,14 +949,30 @@ class ContentGraph:
     ) -> list[ViolationDict]:
         """Query violations across all nodes with optional filters.
 
+        The ledger ``ViolationRecord.status`` is the single source of
+        truth for resolution.  This method stamps
+        ``remediation_resolution`` on returned dicts for statuses that
+        have a deterministic mapping (``ai_abstained``, ``proposed``,
+        ``declined``).  Downstream code should not re-derive resolution
+        for these statuses.
+
         Args:
             status: Filter by status: ``"open"``, ``"fixed"``,
-                ``"proposed"``, or ``"declined"`` (``None`` = all).
+                ``"proposed"``, ``"declined"``, or ``"ai_abstained"``
+                (``None`` = all).
             fixed_by: Filter by attribution (``None`` = all).
 
         Returns:
             Flat list of ``ViolationDict`` from matching records.
         """
+        from .models import RemediationResolution  # noqa: PLC0415
+
+        _status_resolution: dict[str, RemediationResolution] = {
+            "ai_abstained": RemediationResolution.AI_ABSTAINED,
+            "proposed": RemediationResolution.AI_PROPOSED,
+            "declined": RemediationResolution.USER_REJECTED,
+        }
+
         result: list[ViolationDict] = []
         for node in self.nodes():
             for record in node.violation_ledger.values():
@@ -921,7 +980,11 @@ class ContentGraph:
                     continue
                 if fixed_by is not None and record.fixed_by != fixed_by:
                     continue
-                result.append(record.violation)
+                vdict = dict(record.violation)
+                mapped = _status_resolution.get(record.status)
+                if mapped is not None:
+                    vdict["remediation_resolution"] = mapped
+                result.append(vdict)
         return result
 
     # -- Approval tracking (ADR-044 Phase 3) --------------------------------

@@ -71,6 +71,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
         line: Line number or None.
         path: YAML path within the file.
         remediation_class: Numeric remediation tier.
+        remediation_resolution: Numeric remediation resolution status.
         scope: Numeric rule scope.
         validator_source: Validator that produced this (native, opa, ansible, gitleaks).
         original_yaml: Full node YAML as originally written.
@@ -87,6 +88,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     line: int | None
     path: str
     remediation_class: int
+    remediation_resolution: int = 0
     scope: int
     validator_source: str = ""
     original_yaml: str = ""

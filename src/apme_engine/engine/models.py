@@ -96,6 +96,7 @@ class RemediationResolution(str, Enum):
         OSCILLATION: Convergence loop detected oscillation.
         AI_PROPOSED: AI proposed a fix (pending validation).
         AI_FAILED: AI call failed or returned no result.
+        AI_ABSTAINED: AI attempted but could not produce a fix.
         AI_LOW_CONFIDENCE: AI returned a low-confidence proposal.
         USER_REJECTED: User rejected the proposed fix.
         NEEDS_CROSS_FILE: Requires cross-file context (deferred to MCP tool).
@@ -108,6 +109,7 @@ class RemediationResolution(str, Enum):
     OSCILLATION = "oscillation"
     AI_PROPOSED = "ai-proposed"
     AI_FAILED = "ai-failed"
+    AI_ABSTAINED = "ai-abstained"
     AI_LOW_CONFIDENCE = "ai-low-confidence"
     USER_REJECTED = "user-rejected"
     NEEDS_CROSS_FILE = "needs-cross-file"

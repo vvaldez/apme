@@ -266,6 +266,7 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
                 line=line_val,
                 path=v.path,  # type: ignore[attr-defined]
                 remediation_class=v.remediation_class,  # type: ignore[attr-defined]
+                remediation_resolution=v.remediation_resolution,  # type: ignore[attr-defined]
                 scope=v.scope,  # type: ignore[attr-defined]
                 validator_source=v.source,  # type: ignore[attr-defined]
                 original_yaml=v.original_yaml,  # type: ignore[attr-defined]

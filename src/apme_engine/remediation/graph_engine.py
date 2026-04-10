@@ -72,15 +72,18 @@ class GraphFixReport:
     All violation counts are sourced from the ``ContentGraph`` violation
     ledger — ``fixed`` and ``fixed_violations`` come from
     ``query_violations(status="fixed")``, ``remaining_violations`` from
-    ``query_violations(status="open")``.  No snapshot diffs.
+    ``query_violations(status="open")`` plus ``ai_abstained``.  No
+    snapshot diffs.
 
     Attributes:
         passes: Number of convergence passes executed.
         fixed: Count of violations resolved during convergence.
         applied_patches: File patches produced by ``splice_modifications``
             (populated by the caller, not by ``remediate``).
-        remaining_violations: Violations still open after convergence.
+        remaining_violations: Violations not resolved (open + ai_abstained).
         fixed_violations: Violations resolved during convergence.
+        ai_abstained_violations: Subset of remaining where AI attempted
+            but could not produce a fix.
         oscillation_detected: True if the loop bailed due to oscillation.
         nodes_modified: Number of ContentNodes modified.
         step_diffs: Per-progression-step content diffs.
@@ -92,6 +95,7 @@ class GraphFixReport:
     applied_patches: list[FilePatch] = field(default_factory=list)
     remaining_violations: list[ViolationDict] = field(default_factory=list)
     fixed_violations: list[ViolationDict] = field(default_factory=list)
+    ai_abstained_violations: list[ViolationDict] = field(default_factory=list)
     oscillation_detected: bool = False
     nodes_modified: int = 0
     step_diffs: list[dict[str, object]] = field(default_factory=list)
@@ -378,13 +382,15 @@ class GraphRemediationEngine:
 
         remaining = graph.query_violations(status="open")
         fixed_violations = graph.query_violations(status="fixed")
+        ai_abstained = graph.query_violations(status="ai_abstained")
         step_diffs = graph.collect_step_diffs()
 
         return GraphFixReport(
             passes=passes,
             fixed=len(fixed_violations),
-            remaining_violations=remaining,
+            remaining_violations=remaining + ai_abstained,
             fixed_violations=fixed_violations,
+            ai_abstained_violations=ai_abstained,
             oscillation_detected=oscillation,
             nodes_modified=_count_modified_nodes(graph),
             step_diffs=step_diffs,
@@ -555,12 +561,19 @@ class GraphRemediationEngine:
             return_exceptions=True,
         )
 
+        from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415
+
         # Apply accepted fixes serially (graph mutations are not thread-safe)
         proposals: list[AINodeProposal] = []
-        for r in results:
+        proposed_node_ids: set[str] = set()
+        failed_node_ids: set[str] = set()
+        node_id_list = list(by_node.keys())
+        for idx, r in enumerate(results):
             if isinstance(r, BaseException):
+                failed_node_ids.add(node_id_list[idx])
                 logger.error(
-                    "AI proposal failed",
+                    "AI proposal failed for %s",
+                    node_id_list[idx],
                     exc_info=(type(r), r, r.__traceback__),
                 )
                 continue
@@ -572,6 +585,7 @@ class GraphRemediationEngine:
             if node is None:
                 continue
 
+            proposed_node_ids.add(node_id)
             node.update_from_yaml(fix.fixed_snippet)
             graph._dirty_nodes.add(node_id)  # noqa: SLF001
             node.record_state(pass_num, "transformed", source="ai")
@@ -589,12 +603,27 @@ class GraphRemediationEngine:
                     line_end=node.line_end,
                 ),
             )
+
+            if fix.skipped:
+                skipped_ids = frozenset(normalize_rule_id(s.rule_id) for s in fix.skipped)
+                graph.abstain_violations(node_id, skipped_ids)
+
             logger.info(
                 "AI transform applied to %s (rules: %s, confidence: %.2f)",
                 node_id,
                 fix.rule_ids,
                 fix.confidence,
             )
+
+        abstained_total = 0
+        for nid, nvs in by_node.items():
+            if nid in proposed_node_ids or nid in failed_node_ids:
+                continue
+            rule_ids = frozenset(normalize_rule_id(str(v.get("rule_id", ""))) for v in nvs)
+            abstained_total += graph.abstain_violations(nid, rule_ids)
+
+        if abstained_total > 0:
+            logger.info("AI abstained: %d violations marked ai_abstained", abstained_total)
 
         self._progress(
             "graph-ai",

@@ -223,7 +223,7 @@ class TestPartition:
         assert violations[1]["remediation_class"] == RemediationClass.AI_CANDIDATE
         assert violations[2]["remediation_class"] == RemediationClass.MANUAL_REVIEW
         for v in violations:
-            assert v["remediation_resolution"] == RemediationResolution.UNRESOLVED
+            assert "remediation_resolution" not in v
 
     def test_count_by_remediation_class(self) -> None:
         """Verifies count_by_remediation_class returns correct counts."""
@@ -264,7 +264,8 @@ class TestPartition:
         """Verifies RemediationResolution members have string values."""
         assert RemediationResolution.UNRESOLVED.value == "unresolved"
         assert RemediationResolution.TRANSFORM_FAILED.value == "transform-failed"
-        assert len(list(RemediationResolution)) == 10
+        assert RemediationResolution.AI_ABSTAINED.value == "ai-abstained"
+        assert len(list(RemediationResolution)) == 11
 
     def test_all_registered_rules_classify_as_remaining(self) -> None:
         """Remaining violations for registered rules classify as AI_CANDIDATE, not AUTO_FIXABLE.

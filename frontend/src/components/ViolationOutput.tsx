@@ -9,14 +9,18 @@ import {
 import { ViolationDetailModal, type ViolationRecord } from './ViolationDetailModal';
 import { severityClass, severityLabel, severityOrder, bareRuleId, scopeLabel } from './severity';
 
-function tierLabel(rc: number, isRemediate: boolean): string {
+import { RESOLUTION_AI_ABSTAINED } from '../types/constants';
+
+function tierLabel(rc: number, isRemediate: boolean, resolution?: number): string {
+  if (resolution === RESOLUTION_AI_ABSTAINED) return 'AI Tried';
   if (rc === 1) return isRemediate ? 'Fixed' : 'Fixable';
   if (rc === 2) return 'AI';
   if (rc === 3) return 'Manual';
   return '';
 }
 
-function tierPillClass(rc: number, isRemediate: boolean): string {
+function tierPillClass(rc: number, isRemediate: boolean, resolution?: number): string {
+  if (resolution === RESOLUTION_AI_ABSTAINED) return 'apme-pill apme-fix-ai-tried';
   if (rc === 1) return isRemediate ? 'apme-pill apme-fix-passed' : 'apme-pill apme-fix-fixable';
   if (rc === 2) return 'apme-pill apme-fix-ai';
   if (rc === 3) return 'apme-pill apme-fix-manual';
@@ -214,10 +218,10 @@ export function ViolationOutput({ violations, hasFilters, scanType, getRuleDescr
                             {scopeLabel(v.scope) || '\u00A0'}
                           </span>
                           <span
-                            className={tierPillClass(v.remediation_class, isRemediate)}
-                            style={{ visibility: v.remediation_class > 0 ? 'visible' : 'hidden', minWidth: 50 }}
+                            className={tierPillClass(v.remediation_class, isRemediate, v.remediation_resolution)}
+                            style={{ visibility: v.remediation_class > 0 || v.remediation_resolution === RESOLUTION_AI_ABSTAINED ? 'visible' : 'hidden', minWidth: 50 }}
                           >
-                            {tierLabel(v.remediation_class, isRemediate) || '\u00A0'}
+                            {tierLabel(v.remediation_class, isRemediate, v.remediation_resolution) || '\u00A0'}
                           </span>
                           <span className="apme-pill apme-rule-pill" title={ruleTitle(v.rule_id)}>
                             {bareRuleId(v.rule_id)}

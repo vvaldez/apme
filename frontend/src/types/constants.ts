@@ -1,0 +1,1 @@
+export const RESOLUTION_AI_ABSTAINED = 11;

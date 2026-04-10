@@ -74,6 +74,11 @@
   color: var(--apme-sev-high);
 }
 
+.apme-fix-ai-tried {
+  background-color: rgba(245, 166, 35, 0.2);
+  color: #f5a623;
+}
+
 /* Rule pill (violation row) */
 
 .apme-rule-pill {

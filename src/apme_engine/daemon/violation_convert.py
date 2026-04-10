@@ -76,6 +76,7 @@ _RESOLUTION_TO_PROTO: dict[str, int] = {
     RemediationResolution.NEEDS_CROSS_FILE.value: common_pb2.REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE,  # type: ignore[attr-defined]
     RemediationResolution.MANUAL.value: common_pb2.REMEDIATION_RESOLUTION_MANUAL,  # type: ignore[attr-defined]
     RemediationResolution.INFORMATIONAL.value: common_pb2.REMEDIATION_RESOLUTION_INFORMATIONAL,  # type: ignore[attr-defined]
+    RemediationResolution.AI_ABSTAINED.value: common_pb2.REMEDIATION_RESOLUTION_AI_ABSTAINED,  # type: ignore[attr-defined]
 }
 
 _PROTO_TO_RESOLUTION: dict[int, str] = {
@@ -90,6 +91,7 @@ _PROTO_TO_RESOLUTION: dict[int, str] = {
     common_pb2.REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE: RemediationResolution.NEEDS_CROSS_FILE.value,  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_MANUAL: RemediationResolution.MANUAL.value,  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_INFORMATIONAL: RemediationResolution.INFORMATIONAL.value,  # type: ignore[attr-defined]
+    common_pb2.REMEDIATION_RESOLUTION_AI_ABSTAINED: RemediationResolution.AI_ABSTAINED.value,  # type: ignore[attr-defined]
 }
 
 _SCOPE_TO_PROTO: dict[str, int] = {

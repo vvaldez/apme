@@ -50,7 +50,10 @@ function makeUnifiedDiff(original: string, fixed: string, filename: string): str
   return lines.join('\n');
 }
 
-function tierLabel(rc: number, isRemediate: boolean): string {
+import { RESOLUTION_AI_ABSTAINED } from '../types/constants';
+
+function tierLabel(rc: number, isRemediate: boolean, resolution?: number): string {
+  if (resolution === RESOLUTION_AI_ABSTAINED) return 'AI Tried';
   if (rc === 1) return isRemediate ? 'Fixed' : 'Fixable';
   if (rc === 2) return 'AI';
   if (rc === 3) return 'Manual';
@@ -66,6 +69,7 @@ export interface ViolationRecord {
   line: number | null;
   path: string;
   remediation_class: number;
+  remediation_resolution?: number;
   scope?: number;
   validator_source?: string;
   original_yaml?: string;
@@ -144,7 +148,7 @@ export function ViolationDetailModal({ isOpen, onClose, violation, diff, getRule
                   {violation.line}
                 </PageDetail>
                 <PageDetail label="Remediation">
-                  {tierLabel(violation.remediation_class, isRemediate)}
+                  {tierLabel(violation.remediation_class, isRemediate, violation.remediation_resolution)}
                 </PageDetail>
                 <PageDetail label="Message">
                   {violation.message}

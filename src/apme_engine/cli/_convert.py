@@ -24,6 +24,7 @@ _PROTO_TO_RESOLUTION: dict[int, str] = {
     common_pb2.REMEDIATION_RESOLUTION_USER_REJECTED: "user-rejected",  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE: "needs-cross-file",  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_MANUAL: "manual",  # type: ignore[attr-defined]
+    common_pb2.REMEDIATION_RESOLUTION_AI_ABSTAINED: "ai-abstained",  # type: ignore[attr-defined]
 }
 
 _PROTO_TO_SCOPE: dict[int, str] = {

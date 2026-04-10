@@ -7,6 +7,7 @@ export interface ViolationDetail {
   line: number | null;
   path: string;
   remediation_class: number;
+  remediation_resolution: number;
   scope: number;
   validator_source?: string;
   original_yaml?: string;

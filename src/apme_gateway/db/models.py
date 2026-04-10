@@ -153,6 +153,7 @@ class Violation(Base):
         line: Line number or None.
         path: YAML path within the file.
         remediation_class: Numeric remediation tier.
+        remediation_resolution: Numeric remediation resolution status.
         scope: Numeric rule scope.
         validator_source: Validator that produced this violation (native, opa, ansible, gitleaks).
         original_yaml: Full node YAML as originally written.
@@ -173,6 +174,7 @@ class Violation(Base):
     line: Mapped[int | None] = mapped_column(Integer, nullable=True)
     path: Mapped[str] = mapped_column(Text, nullable=False, default="")
     remediation_class: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    remediation_resolution: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     scope: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     validator_source: Mapped[str] = mapped_column(Text, nullable=False, default="")
     original_yaml: Mapped[str] = mapped_column(Text, nullable=False, default="")

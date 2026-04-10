@@ -23,6 +23,7 @@ enum RemediationResolution {
   REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE = 8;
   REMEDIATION_RESOLUTION_MANUAL = 9;
   REMEDIATION_RESOLUTION_INFORMATIONAL = 10;
+  REMEDIATION_RESOLUTION_AI_ABSTAINED = 11;
 }
 
 // RuleScope indicates the structural scope at which a rule operates.

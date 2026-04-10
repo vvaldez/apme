@@ -73,7 +73,7 @@ from apme.v1.validate_pb2 import ValidateRequest
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
-from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict
+from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.log_bridge import attach_collector
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
@@ -2399,15 +2399,15 @@ def _reconcile_after_approval(
         else:
             graph.approve_proposed(nid)
 
-    # Remaining = open + declined (all unresolved violations).
+    # Remaining = open + declined + ai_abstained (all unresolved violations).
     # Post-approval, AI has already had its chance — everything remaining
     # is manual review regardless of what classify_violation would say.
     open_violations = graph.query_violations(status="open")
     declined_violations = graph.query_violations(status="declined")
-    remaining = [dict(v) for v in open_violations + declined_violations]
+    ai_abstained_violations = graph.query_violations(status="ai_abstained")
+    remaining = [dict(v) for v in open_violations + declined_violations + ai_abstained_violations]
     for v in remaining:
         v["remediation_class"] = RemediationClass.MANUAL_REVIEW
-        v["remediation_resolution"] = RemediationResolution.UNRESOLVED
     _enrich_violations_from_graph(remaining, graph, fixed=False)
 
     fixed = [dict(v) for v in graph.query_violations(status="fixed")]
