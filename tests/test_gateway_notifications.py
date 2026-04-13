@@ -438,6 +438,35 @@ class TestNotificationEndpoints:
         finally:
             unsubscribe(q)
 
+    async def test_sse_endpoint_delivers_event(self, client: AsyncClient) -> None:
+        """The /notifications/stream endpoint returns SSE headers and broadcast payloads.
+
+        Args:
+            client: Async HTTP test client.
+        """
+        import asyncio
+        import json
+
+        async with client.stream("GET", "/api/v1/notifications/stream") as resp:
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/event-stream")
+            assert resp.headers.get("cache-control") == "no-cache"
+            assert resp.headers.get("x-accel-buffering") == "no"
+
+            payload = {"id": 1, "type": "scan_complete", "title": "SSE Test"}
+            _broadcast(payload)
+
+            lines = resp.aiter_lines()
+            for _ in range(20):
+                line = await asyncio.wait_for(anext(lines), timeout=2.0)
+                if line.startswith("data: "):
+                    data = json.loads(line.removeprefix("data: ").strip())
+                    assert data["type"] == "scan_complete"
+                    assert data["title"] == "SSE Test"
+                    break
+            else:
+                pytest.fail("Timed out waiting for SSE data event")
+
 
 # ---------------------------------------------------------------------------
 # Broadcast-after-commit tests

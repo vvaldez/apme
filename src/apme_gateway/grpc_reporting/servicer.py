@@ -475,4 +475,5 @@ async def _generate_scan_notifications(
         await db.commit()
         broadcast_notifications(payloads)
     except Exception:
+        await db.rollback()
         logger.warning("Notification generation failed for scan %s", scan.scan_id, exc_info=True)

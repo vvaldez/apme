@@ -160,9 +160,25 @@ export function useNotificationStream(): void {
           }
         }
       } catch {
-        // Gateway may be unavailable — silent degradation
         restLoaded = true;
         if (!mountedRef.current) return;
+
+        const pending = buffer.splice(0);
+        if (pending.length > 0) {
+          setNotificationGroups(() => buildGroups(pending));
+          for (const buffered of pending) {
+            const timeout = NO_DISMISS_TYPES.has(buffered.type) ? undefined : 8000;
+            alertToaster.addAlert({
+              key: `notif-${buffered.id}`,
+              title: buffered.title,
+              children: buffered.message,
+              variant: buffered.variant,
+              timeout,
+              actionClose: undefined,
+            });
+            markNotificationRead(buffered.id).catch(() => {});
+          }
+        }
       }
     };
 

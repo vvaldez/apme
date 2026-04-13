@@ -20,6 +20,7 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Query, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
 from apme_engine.severity_defaults import severity_from_proto, severity_to_label
@@ -67,7 +68,7 @@ from apme_gateway.api.schemas import (
 )
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import GalaxyServer, PatchedFile, Rule, RuleOverride, Scan, ScanManifest
+from apme_gateway.db.models import GalaxyServer, PatchedFile, Project, Rule, RuleOverride, Scan, ScanManifest
 
 logger = logging.getLogger(__name__)
 
@@ -2386,10 +2387,12 @@ async def project_operate_ws(
                 if captured_patches:
                     await q.store_patches(db, completed_scan_id, captured_patches)
                 scan_row = await q.get_scan(db, completed_scan_id)
-                old_hs = proj.health_score
+                proj_row = (await db.execute(select(Project).where(Project.id == proj.id))).scalar_one_or_none()
+                old_hs = proj_row.health_score if proj_row else None
                 if scan_row is not None:
                     new_hs = q.compute_health_score(list(scan_row.violations))
-                    proj.health_score = new_hs
+                    if proj_row is not None:
+                        proj_row.health_score = new_hs
 
                     from apme_gateway.notifications import (  # noqa: PLC0415
                         broadcast_notifications,
