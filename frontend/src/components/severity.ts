@@ -31,6 +31,19 @@ export const SEVERITY_LABELS: Record<string, string> = {
   info: 'Info',
 };
 
+export const SEVERITY_INT_TO_API: Record<number, string> = {
+  6: 'critical', 5: 'error', 4: 'high', 3: 'medium', 2: 'low', 1: 'info',
+};
+
+export const SEVERITY_INT_OPTIONS: { value: number; label: string }[] = [
+  { value: 6, label: 'Critical' },
+  { value: 5, label: 'Error' },
+  { value: 4, label: 'High' },
+  { value: 3, label: 'Medium' },
+  { value: 2, label: 'Low' },
+  { value: 1, label: 'Info' },
+];
+
 const SEVERITY_RANK: Record<string, number> = {
   critical: 0, error: 1, high: 2, medium: 3, low: 4, info: 5,
 };
