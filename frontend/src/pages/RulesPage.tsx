@@ -390,7 +390,7 @@ export function RulesPage() {
                         isDisabled={updatingIds.has(rule.rule_id)}
                         onClick={() => handleResetOverride(rule.rule_id)}
                       >
-                        {updatingIds.has(rule.rule_id) ? 'Resetting...' : 'Reset'}
+                        Reset
                       </Button>
                     )}
                   </Td>
@@ -525,7 +525,7 @@ export function RulesPage() {
                 isDisabled={updatingIds.has(selectedRule.rule_id)}
                 onClick={() => handleResetOverride(selectedRule.rule_id)}
               >
-                {updatingIds.has(selectedRule.rule_id) ? 'Resetting...' : 'Reset Override'}
+                Reset Override
               </Button>
             )}
             <Button variant="link" onClick={() => { detailRequestRef.current++; setSelectedRule(null); }}>Close</Button>
