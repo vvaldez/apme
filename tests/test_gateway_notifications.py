@@ -437,7 +437,7 @@ class TestNotificationEndpoints:
             assert data["title"] == "Test"
         finally:
             unsubscribe(q)
-            await stream.aclose()  # type: ignore[attr-defined]
+            await stream.aclose()
 
     async def test_sse_endpoint_headers(self) -> None:
         """The /notifications/stream endpoint returns correct SSE and proxy headers."""

@@ -17,11 +17,10 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from typing import cast
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
 from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import (
@@ -2191,7 +2190,7 @@ async def notification_stream() -> StreamingResponse:
                 with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
                     await pending_chunk
             with contextlib.suppress(Exception):
-                await stream.aclose()  # type: ignore[attr-defined]
+                await stream.aclose()
             unsubscribe(queue)
 
     return StreamingResponse(

@@ -16,7 +16,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -78,7 +78,7 @@ def unsubscribe(q: asyncio.Queue[dict[str, Any]]) -> None:
         _subscribers.remove(q)
 
 
-async def sse_event_stream(q: asyncio.Queue[dict[str, Any]]) -> AsyncIterator[str]:
+async def sse_event_stream(q: asyncio.Queue[dict[str, Any]]) -> AsyncGenerator[str, None]:
     """Yield SSE-formatted events from a subscriber queue.
 
     This is an async generator consumed by FastAPI's ``StreamingResponse``.
